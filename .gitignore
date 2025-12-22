@@ -1,0 +1,27 @@
+# Build directory
+/build/
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# Database files
+*.db
+*.db-journal
+
+# VSCode specific
+.vscode/
+
+# Zed specific
+.zed/
+
+# Common temporary files
+*~
+*.swp
+*.swo
+
+# OS generated files
+.DS_Store
+Thumbs.db
