@@ -1,6 +1,6 @@
 #include "states.h"
 
-enum ScreenState g_screenState = LOGIN;
+enum ScreenState g_screenState = CHAT;
 
 void changeScreenState(enum ScreenState newState)
 {
@@ -20,7 +20,7 @@ char *getScreenStateName(enum ScreenState state)
             return "LOGIN";
         case REGISTER:
             return "REGISTER";
-        case MAIN_MENU:
+        case CHAT:
             return "MAIN_MENU";
        default:
             return "UNKNOWN";

@@ -2,7 +2,7 @@
 #define STATES_H
 
 enum ScreenState {
-    MAIN_MENU,
+    CHAT,
     LOGIN,
     REGISTER,
 };

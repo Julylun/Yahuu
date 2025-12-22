@@ -42,7 +42,7 @@ void drawLoginScreen()
 
 
     // Draw Welcome Text
-    const char* WelcomeText = "Welcome to ChatXiTrum";
+    const char* WelcomeText = "Welcome to Yahuu";
     const int WelComeText_FontSize = 30;
     const Font Font_OpenSans_Bold = LoadFontEx("assets/fonts/opensans/OpenSans-SemiBold.ttf", WelComeText_FontSize, 0, 0);
     Vector2 WelcomeTextPosition = {

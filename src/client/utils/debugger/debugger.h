@@ -6,4 +6,6 @@
 bool isDebugModeEnabled();
 void toggleDebugMode();
 void drawDebugInfo();
+void setDebugMessage(const char *message);
+
 #endif
