@@ -1,95 +1,249 @@
 #include "chatScreen.h"
 #include <raylib.h>
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <stdbool.h>
+#include "../../../services/networkService/networkService.h"
+#include "../../../services/messageService/messageService.h"
+#include "../../components/components.h"
 
+// --- Module State ---
+typedef struct {
+    long sender_id;
+    char message[1024];
+    char time[32];
+    bool is_me; // NOTE: is_me logic requires knowing our own user ID.
+} ChatMessage;
+
+static long g_my_user_id = -1; // Placeholder for the current user's ID
+static long g_contact_ids[1024];
+static int g_contact_count = 0;
+
+static long g_current_chat_contact_id = -1;
+static ChatMessage g_chat_messages[2048];
+static int g_chat_message_count = 0;
+
+// --- Helper Functions ---
+static void parse_and_load_messages(const char* history_data) {
+    g_chat_message_count = 0;
+    if (history_data == NULL || strlen(history_data) == 0) {
+        return;
+    }
+
+    char* history_copy = strdup(history_data);
+    char* msg_token = strtok(history_copy, ";");
+
+    while (msg_token != NULL && g_chat_message_count < 2048) {
+        char* sender_str = strtok(msg_token, ",");
+        char* message_str = strtok(NULL, ",");
+        char* time_str = strtok(NULL, ",");
+
+        if (sender_str && message_str && time_str) {
+            ChatMessage* msg = &g_chat_messages[g_chat_message_count];
+            msg->sender_id = atol(sender_str);
+            strncpy(msg->message, message_str, sizeof(msg->message) - 1);
+            strncpy(msg->time, time_str, sizeof(msg->time) - 1);
+            msg->is_me = (msg->sender_id == g_my_user_id);
+            g_chat_message_count++;
+        }
+        msg_token = strtok(NULL, ";");
+    }
+    free(history_copy);
+    printf("ChatScreen: Parsed and loaded %d messages.\n", g_chat_message_count);
+}
+
+
+static void add_contact_if_not_exists(long contactId) {
+    bool found = false;
+    for (int i = 0; i < g_contact_count; i++) {
+        if (g_contact_ids[i] == contactId) {
+            found = true;
+            break;
+        }
+    }
+    if (!found && g_contact_count < 1024) {
+        g_contact_ids[g_contact_count++] = contactId;
+    }
+}
+
+// --- Async Message Handler ---
+static void handle_async_messages(const char* message) {
+    char* msg_copy = strdup(message);
+    if (msg_copy == NULL) return;
+
+    const char* separator = "^";
+    char* command = strtok(msg_copy, separator);
+
+    if (command != NULL) {
+        if (strcmp(command, "RECEIVE_DM") == 0) {
+            char* senderId_str = strtok(NULL, separator);
+            char* msg_content = strtok(NULL, separator);
+            if (senderId_str && msg_content) {
+                long senderId = atol(senderId_str);
+                add_contact_if_not_exists(senderId);
+
+                if (senderId == g_current_chat_contact_id && g_chat_message_count < 2048) {
+                    ChatMessage* msg = &g_chat_messages[g_chat_message_count];
+                    msg->sender_id = senderId;
+                    strncpy(msg->message, msg_content, sizeof(msg->message) - 1);
+                    strcpy(msg->time, "Just now");
+                    msg->is_me = (msg->sender_id == g_my_user_id);
+                    g_chat_message_count++;
+                }
+            }
+        }
+    }
+    free(msg_copy);
+}
 
 void drawChatListPanel()
 {
     static bool isInitialized = false;
-    static Texture2D Texture_ChatListIcon;
-
     if (!isInitialized) {
-        Texture_ChatListIcon = loadResizeImage("assets/icon.png", 60, 60);
+        // One-time initialization for this screen
+        Network_set_async_message_handler(handle_async_messages);
+
+        int count = 0;
+        long* contacts = MessageService_get_contacts(&count);
+        if (contacts != NULL) {
+            g_contact_count = count < 1024 ? count : 1024;
+            memcpy(g_contact_ids, contacts, g_contact_count * sizeof(long));
+            free(contacts);
+        }
         isInitialized = true;
     }
 
-    // ======== ICON ===========
-    Rectangle Panel_ChatList = {
-        0,
-        0,
-        WINDOW_SCREEN_WIDTH/4,
-        WINDOW_SCREEN_HEIGHT
-    };
-    Rectangle Panel_ChatListHeader = {
-        Panel_ChatList.x,
-        Panel_ChatList.y,
-        Panel_ChatList.width,
-        180
-    };
-    DrawRectangleRec(Panel_ChatList, RED);
-    DrawRectangleRec(Panel_ChatListHeader, GREEN);
-    DrawTexture(Texture_ChatListIcon, 0, 0, WHITE);
+    // --- Drawing Code (Your original UI) ---
+    Rectangle Panel_ChatList = { 0, 0, WINDOW_SCREEN_WIDTH/4, WINDOW_SCREEN_HEIGHT };
+    Rectangle Panel_ChatListHeader = { Panel_ChatList.x, Panel_ChatList.y, Panel_ChatList.width, 180 };
+    DrawRectangleRec(Panel_ChatList, COLOR_DARKTHEME_BLACK);
+    DrawRectangleRec(Panel_ChatListHeader, COLOR_DARKTHEME_BLACK);
+    // DrawTexture(Texture_ChatListIcon, 0, 0, WHITE); // Assuming loadResizeImage is a custom function
 
-    // ======== TITLE ===========
     Vector2 Measure_ChatListTitle = MeasureTextEx(Font_Opensans_Bold_20, WINDOW_TITLE, 20, 1);
-    Vector2 Position_ChatListTitle = {
-        Panel_ChatList.width/2 - Measure_ChatListTitle.x/2,
-        30 - 12
-    };
-    DrawTextEx(
-        Font_Opensans_Bold_20,WINDOW_TITLE,
-        Position_ChatListTitle, 20, 1, WHITE
-    );
+    Vector2 Position_ChatListTitle = { Panel_ChatList.width/2 - Measure_ChatListTitle.x/2, 30 - 12 };
+    DrawTextEx(Font_Opensans_Bold_20, WINDOW_TITLE, Position_ChatListTitle, 20, 1, WHITE);
 
-
-    // ======== NEW CHAT BUTTON ===========
-    Rectangle Position_NewChatButton = {
-        Panel_ChatList.width/2 - 85,
-        60,
-        170,
-        40
-    };
+    Rectangle Position_NewChatButton = { Panel_ChatList.width/2 - 85, 60, 170, 40 };
     char Text_NewChatTitle[] = "New Chat";
-    RoundedButton Button_NewChat = CreateRoundedButton(
-        Position_NewChatButton,
-        COLOR_DARKTHEME_PURPLE,
-        COLOR_DARKTHEME_BLACK,
-        COLOR_DARKTHEME_GRAY,
-        Text_NewChatTitle,
-        &Font_Opensans_Bold_17,
-        15,
-        0
-    );
-    DrawRoundedButton(Button_NewChat);
+    DrawRoundedButton(CreateRoundedButton(Position_NewChatButton, COLOR_DARKTHEME_PURPLE, COLOR_DARKTHEME_BLACK, COLOR_DARKTHEME_GRAY, Text_NewChatTitle, &Font_Opensans_Bold_17, 15, 0));
 
-
-    // ========= Join Room ============
-    Rectangle Position_JoinRoomButton = {
-        Panel_ChatList.width/2 - 85,
-        110,
-        170,
-        40
-    };
+    Rectangle Position_JoinRoomButton = { Panel_ChatList.width/2 - 85, 110, 170, 40 };
     char Text_JoinRoomTitle[] = "Join Room";
-    RoundedButton Button_JoinRoom = CreateRoundedButton(
-        Position_JoinRoomButton,
-        COLOR_DARKTHEME_PURPLE,
-        COLOR_DARKTHEME_BLACK,
-        COLOR_DARKTHEME_GRAY,
-        Text_JoinRoomTitle,
-        &Font_Opensans_Bold_17,
-        15,
-        0
-    );
-    DrawRoundedButton(Button_JoinRoom);
+    DrawRoundedButton(CreateRoundedButton(Position_JoinRoomButton, COLOR_DARKTHEME_PURPLE, COLOR_DARKTHEME_BLACK, COLOR_DARKTHEME_GRAY, Text_JoinRoomTitle, &Font_Opensans_Bold_17, 15, 0));
+
+    Rectangle Position_GuiListView = { 0, 180, Panel_ChatList.width, 420 };
+
+    float numberOfItems = g_contact_count;
+    float itemHeight = 40;
+    static float scrollY = 0.0f;
+    static float scrollSpeed = 20.0f;
+    float contentHeight = numberOfItems * itemHeight;
+    Vector2 mousePos = GetMousePosition();
+    if (CheckCollisionPointRec(mousePos, Position_GuiListView))
+    {
+        float wheel = GetMouseWheelMove();
+        if (wheel != 0) {
+            scrollY += wheel * scrollSpeed;
+            if (scrollY > 0) scrollY = 0;
+            float maxScroll = contentHeight - Position_GuiListView.height;
+            if (contentHeight > Position_GuiListView.height && scrollY < -maxScroll) scrollY = -maxScroll;
+        }
+    }
+
+    BeginScissorMode((int)Position_GuiListView.x, (int)Position_GuiListView.y, (int)Position_GuiListView.width, (int)Position_GuiListView.height);
+    for (int i = 0; i < numberOfItems; i++)
+    {
+        float itemY = Position_GuiListView.y + scrollY + (i * itemHeight);
+        if (itemY + itemHeight < Position_GuiListView.y || itemY > Position_GuiListView.y + Position_GuiListView.height) continue;
+
+        Rectangle Position_ChatListButton = { 0, itemY, Panel_ChatList.width, 40 };
+
+        // Click handling
+        if (CheckCollisionPointRec(mousePos, Position_ChatListButton) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+            g_current_chat_contact_id = g_contact_ids[i];
+            char* history_str = MessageService_get_history(g_current_chat_contact_id);
+            parse_and_load_messages(history_str);
+            if (history_str) free(history_str);
+        }
+
+        char user_text[64];
+        snprintf(user_text, sizeof(user_text), "User ID: %ld", g_contact_ids[i]);
+        ChatListButton(Position_ChatListButton, user_text, Font_Opensans_Bold_17, 15, COLOR_DARKTHEME_GRAY, COLOR_DARKTHEME_BLACK, COLOR_DARKTHEME_GRAY, WHITE, 0);
+    }
+    EndScissorMode();
 }
-
-
-
 
 void drawChatSection()
 {
-    DrawRectangle(WINDOW_SCREEN_WIDTH/4, 0, WINDOW_SCREEN_WIDTH/4*3, WINDOW_SCREEN_HEIGHT, BLUE);
+    Rectangle Position_ChatSection = { WINDOW_SCREEN_WIDTH/4, 0, WINDOW_SCREEN_WIDTH/4*3, WINDOW_SCREEN_HEIGHT };
+    DrawRectangleRec(Position_ChatSection, COLOR_DARKTHEME_GRAY);
+
+    Rectangle Position_ChatName = { Position_ChatSection.x, Position_ChatSection.y, Position_ChatSection.width, 50 };
+    DrawRectangleRec(Position_ChatName, COLOR_DARKTHEME_BLACK);
+    Vector2 Position_ChatNameText = { Position_ChatName.x + 20, Position_ChatName.y + 15 };
+
+    if (g_current_chat_contact_id != -1) {
+        DrawTextEx(Font_Opensans_Bold_20, TextFormat("Chat with User %ld", g_current_chat_contact_id), Position_ChatNameText, 20, 0, WHITE);
+    } else {
+        DrawTextEx(Font_Opensans_Bold_20, "Select a chat", Position_ChatNameText, 20, 0, WHITE);
+    }
+
+    Rectangle Position_ChatPage = { 200, Position_ChatName.y + Position_ChatName.height, 600, Position_ChatSection.height - Position_ChatName.height - 40 };
+    DrawRectangleRec(Position_ChatPage, COLOR_DARKTHEME_GRAY);
+
+    float numberOfItems = g_chat_message_count;
+    float itemHeight = 80;
+    static float scrollY = 0.0f;
+    static float scrollSpeed = 20.0f;
+    float contentHeight = numberOfItems * itemHeight;
+    Vector2 mousePos = GetMousePosition();
+    if (CheckCollisionPointRec(mousePos, Position_ChatPage))
+    {
+        float wheel = GetMouseWheelMove();
+        if (wheel != 0) {
+            scrollY += wheel * scrollSpeed;
+            if (scrollY > 0) scrollY = 0;
+            float maxScroll = contentHeight - Position_ChatPage.height;
+            if (contentHeight > Position_ChatPage.height && scrollY < -maxScroll) scrollY = -maxScroll;
+        }
+    }
+
+    BeginScissorMode((int)Position_ChatPage.x, (int)Position_ChatPage.y, (int)Position_ChatPage.width, (int)Position_ChatPage.height);
+    for (int i = 0; i < numberOfItems; i++)
+    {
+        float itemY = Position_ChatPage.y + scrollY + (i * itemHeight);
+        if (itemY + itemHeight < Position_ChatPage.y || itemY > Position_ChatPage.y + Position_ChatPage.height) continue;
+
+        Rectangle Position_bubbleChat = { Position_ChatPage.x, itemY, Position_ChatPage.width, 40 };
+
+        // NOTE: 'is_me' logic depends on knowing our own user ID, which we don't have yet. Hardcoding to false.
+        DrawBubbleChat(Position_bubbleChat, g_chat_messages[i].message, Font_Opensans_Regular_20, 20, BLACK, false);
+    }
+    EndScissorMode();
+
+    // Draw the input box
+    Rectangle Position_InputBox = {
+        210,
+        550,
+        580,
+        40
+    };
+    static char dynamic_chatsceen_input[100] = "";
+    static bool dynamic_chatscreen_isActive = false;
+    TextField inputBox = createTextField(
+        "Type your message here...",
+        dynamic_chatsceen_input,
+        &dynamic_chatscreen_isActive,
+        Position_InputBox,
+        0.3f,
+        10.0f,
+        &Font_Opensans_Regular_20
+    );
+    drawTextField(&inputBox);
 }
+
 void drawChatScreen()
 {
     drawChatListPanel();

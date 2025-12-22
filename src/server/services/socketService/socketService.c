@@ -1,17 +1,14 @@
 #include "socketService.h"
-#include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <pthread.h>
-
-#include "socketService.h"
 #include "../userService/userService.h" // Include the user service to handle logic
+#include "../sessionManager/sessionManager.h"
+#include "../messageService/messageService.h"
+#include "../groupService/groupService.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <arpa/inet.h> // For inet_ntoa
 
 // This is the new, command-aware client handler
 static void* client_handler(void* socket_desc) {
@@ -54,13 +51,188 @@ static void* client_handler(void* socket_desc) {
             char* password = strtok(NULL, separator);
 
             if (username && password) {
-                if (UserService_login(username, password)) {
+                User* user = UserService_login(username, password);
+                if (user != NULL) {
+                    SessionManager_add(user->id, user->username, sock);
                     snprintf(response, sizeof(response), "LOGIN_SUCCESS");
+                    User_free(user); // Free the user struct after use
                 } else {
                     snprintf(response, sizeof(response), "LOGIN_FAIL^INVALID_CREDENTIALS");
                 }
             } else {
                 snprintf(response, sizeof(response), "LOGIN_FAIL^INSUFFICIENT_ARGS");
+            }
+        } else if (strcmp(command, "SEND_DM") == 0) {
+            const UserSession* sender_session = SessionManager_get_session_by_socket(sock);
+            if (sender_session == NULL) {
+                snprintf(response, sizeof(response), "ERROR^NOT_LOGGED_IN");
+            } else {
+                char* receiverId_str = strtok(NULL, separator);
+                char* message = strtok(NULL, separator);
+
+                if (receiverId_str && message) {
+                    long receiverId = atol(receiverId_str);
+                    long message_id = MessageService_save_dm(sender_session->userId, receiverId, message);
+
+                    if (message_id > 0) {
+                        snprintf(response, sizeof(response), "SEND_DM_SUCCESS^%ld", message_id);
+                        
+                        int receiver_socket = SessionManager_get_socket(receiverId);
+                        if (receiver_socket != -1) {
+                            char forward_msg[2048];
+                            snprintf(forward_msg, sizeof(forward_msg), "RECEIVE_DM^%ld^%s", sender_session->userId, message);
+                            printf("Forwarding DM from %ld to %ld (socket %d): %s\n", sender_session->userId, receiverId, receiver_socket, forward_msg);
+                            write(receiver_socket, forward_msg, strlen(forward_msg));
+                        }
+                    } else {
+                        snprintf(response, sizeof(response), "SEND_DM_FAIL^COULD_NOT_SAVE");
+                    }
+                } else {
+                    snprintf(response, sizeof(response), "SEND_DM_FAIL^INSUFFICIENT_ARGS");
+                }
+            }
+        } else if (strcmp(command, "CREATE_GROUP") == 0) {
+            const UserSession* sender_session = SessionManager_get_session_by_socket(sock);
+            if (sender_session == NULL) {
+                snprintf(response, sizeof(response), "ERROR^NOT_LOGGED_IN");
+            } else {
+                char* groupName = strtok(NULL, separator);
+                if (groupName) {
+                    long new_groupId = GroupService_create_group(groupName, sender_session->userId);
+                    if (new_groupId > 0) {
+                        snprintf(response, sizeof(response), "CREATE_GROUP_SUCCESS^%ld", new_groupId);
+                    } else {
+                        snprintf(response, sizeof(response), "CREATE_GROUP_FAIL");
+                    }
+                } else {
+                    snprintf(response, sizeof(response), "CREATE_GROUP_FAIL^INSUFFICIENT_ARGS");
+                }
+            }
+        } else if (strcmp(command, "SEND_GROUP_MSG") == 0) {
+            const UserSession* sender_session = SessionManager_get_session_by_socket(sock);
+            if (sender_session == NULL) {
+                snprintf(response, sizeof(response), "ERROR^NOT_LOGGED_IN");
+            } else {
+                char* groupId_str = strtok(NULL, separator);
+                char* message = strtok(NULL, separator);
+
+                if (groupId_str && message) {
+                    long groupId = atol(groupId_str);
+                    long message_id = GroupService_save_group_message(groupId, sender_session->userId, message);
+
+                    if (message_id > 0) {
+                        snprintf(response, sizeof(response), "SEND_GROUP_MSG_SUCCESS^%ld", message_id);
+                        
+                        PeachRecordSet* members = GroupService_get_group_members(groupId);
+                        if (members != NULL) {
+                            for (PeachRecord* member_rec = members->head; member_rec != NULL; member_rec = member_rec->next) {
+                                long member_userId = atol(member_rec->fields[2]); // userId is the 3rd field
+                                
+                                if (member_userId == sender_session->userId) continue; // Don't send to self
+
+                                int member_socket = SessionManager_get_socket(member_userId);
+                                if (member_socket != -1) {
+                                    char forward_msg[2048];
+                                    snprintf(forward_msg, sizeof(forward_msg), "RECEIVE_GROUP_MSG^%ld^%ld^%s", groupId, sender_session->userId, message);
+                                    printf("Forwarding Group Msg to %ld (socket %d)\n", member_userId, member_socket);
+                                    write(member_socket, forward_msg, strlen(forward_msg));
+                                }
+                            }
+                            Peach_free_record_set(members);
+                        }
+                    } else {
+                        snprintf(response, sizeof(response), "SEND_GROUP_MSG_FAIL^COULD_NOT_SAVE");
+                    }
+                } else {
+                    snprintf(response, sizeof(response), "SEND_GROUP_MSG_FAIL^INSUFFICIENT_ARGS");
+                }
+            }
+        } else if (strcmp(command, "GET_DM_HISTORY") == 0) {
+            const UserSession* sender_session = SessionManager_get_session_by_socket(sock);
+            if (sender_session == NULL) {
+                snprintf(response, sizeof(response), "ERROR^NOT_LOGGED_IN");
+            } else {
+                char* contactId_str = strtok(NULL, separator);
+                if (contactId_str) {
+                    long contactId = atol(contactId_str);
+                    PeachRecordSet* history = MessageService_get_history(sender_session->userId, contactId);
+                    
+                    // Manually send history response, then clear the standard response buffer
+                    if (history != NULL && history->record_count > 0) {
+                        size_t buffer_size = 16384; // 16KB buffer
+                        char* history_response = malloc(buffer_size);
+                        if (history_response) {
+                            strcpy(history_response, "HISTORY_DATA^");
+                            size_t current_len = strlen(history_response);
+
+                            for (PeachRecord* rec = history->head; rec != NULL; rec = rec->next) {
+                                // fields: id^senderId^receiverId^message^time
+                                char* msg_senderId = rec->fields[1];
+                                char* msg_content = rec->fields[3];
+                                char* msg_time = rec->fields[4];
+                                
+                                int written = snprintf(history_response + current_len, buffer_size - current_len,
+                                                       "%s,%s,%s;", msg_senderId, msg_content, msg_time);
+                                
+                                if (written > 0 && current_len + written < buffer_size) {
+                                    current_len += written;
+                                } else {
+                                    break;
+                                }
+                            }
+                            write(sock, history_response, current_len);
+                            free(history_response);
+                        }
+                        Peach_free_record_set(history);
+                    } else {
+                        // No history or error, send empty data
+                        write(sock, "HISTORY_DATA^", strlen("HISTORY_DATA^"));
+                    }
+                    snprintf(response, sizeof(response), ""); // Clear response buffer
+                } else {
+                    snprintf(response, sizeof(response), "ERROR^GET_DM_HISTORY_FAIL^INSUFFICIENT_ARGS");
+                }
+            }
+        } else if (strcmp(command, "GET_CONTACTS") == 0) {
+            snprintf(response, sizeof(response), ""); // Clear standard response
+            const UserSession* sender_session = SessionManager_get_session_by_socket(sock);
+            if (sender_session == NULL) {
+                snprintf(response, sizeof(response), "ERROR^NOT_LOGGED_IN");
+            } else {
+                int count = 0;
+                long* contacts = MessageService_get_contacts(sender_session->userId, &count);
+
+                if (contacts != NULL && count > 0) {
+                    size_t buffer_size = 8192; // 8KB buffer for contact list
+                    char* contacts_response = malloc(buffer_size);
+                    if (contacts_response) {
+                        strcpy(contacts_response, "CONTACTS_DATA^");
+                        size_t current_len = strlen(contacts_response);
+
+                        for (int i = 0; i < count; i++) {
+                            int written = snprintf(contacts_response + current_len, buffer_size - current_len,
+                                                   "%ld,", contacts[i]);
+                            
+                            if (written > 0 && current_len + written < buffer_size) {
+                                current_len += written;
+                            } else {
+                                break; // Buffer full or error
+                            }
+                        }
+                        // Remove trailing comma if any
+                        if (current_len > 0 && contacts_response[current_len - 1] == ',') {
+                            contacts_response[current_len - 1] = '\0';
+                            current_len--;
+                        }
+
+                        write(sock, contacts_response, current_len);
+                        free(contacts_response);
+                    }
+                    free(contacts);
+                } else {
+                    // No contacts or error
+                    write(sock, "CONTACTS_DATA^", strlen("CONTACTS_DATA^"));
+                }
             }
         } else {
             snprintf(response, sizeof(response), "ERROR^UNKNOWN_COMMAND");
@@ -68,9 +240,11 @@ static void* client_handler(void* socket_desc) {
         
         free(msg_copy);
 
-        // Send the response back to the client
-        printf("Sending response to client %d: %s\n", sock, response);
-        write(sock, response, strlen(response));
+        // Send the response back to the client, if one was prepared
+        if (strlen(response) > 0) {
+            printf("Sending response to client %d: %s\n", sock, response);
+            write(sock, response, strlen(response));
+        }
         
         memset(client_message, 0, sizeof(client_message));
         memset(response, 0, sizeof(response));
@@ -82,6 +256,9 @@ static void* client_handler(void* socket_desc) {
     } else if (read_size == -1) {
         perror("recv failed");
     }
+
+    // Clean up the session before closing the socket
+    SessionManager_remove_by_socket(sock);
 
     close(sock);
     return 0;

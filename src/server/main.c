@@ -1,6 +1,8 @@
 #include <stdio.h>
 #include "services/userService/userService.h"
 #include "services/socketService/socketService.h"
+#include "services/sessionManager/sessionManager.h"
+
 
 int main() {
     printf("Server starting...\n");
@@ -11,6 +13,9 @@ int main() {
         // return 1;
     }
     printf("User document structure is ready.\n");
+
+    // 1.1 Initialize Session Manager
+    SessionManager_init();
 
     // 2. Initialize network layer
     int server_fd = Socket_init(8080, 10); // Listen on port 8080

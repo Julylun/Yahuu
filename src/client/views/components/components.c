@@ -1,5 +1,6 @@
 #include "components.h"
 #include <raylib.h>
+#include <stdio.h>
 
 TextField createTextField(char *placeHolder, char *value, bool *isActive, Rectangle bounds, float roundedness, float segments, Font *font) {
     static int frameCounter = 0;
@@ -217,5 +218,70 @@ void DrawRoundedButton(RoundedButton btn) {
     // 5. Gọi hàm callback nếu click xong
     if (isHover && isClicked && btn.onClick != NULL) {
         btn.onClick();
+    }
+}
+
+void ChatListButton(Rectangle bounds,
+                    const char* text,
+                    Font font, float fontSize,
+                    Color bgNormal, Color bgHover, Color bgPress,
+                    Color textColor,
+                    ButtonCallback callback)
+{
+    Vector2 mouse = GetMousePosition();
+    bool isHover = CheckCollisionPointRec(mouse, bounds);
+    bool isDown = IsMouseButtonDown(MOUSE_BUTTON_LEFT);
+    bool isClick = IsMouseButtonReleased(MOUSE_BUTTON_LEFT);
+
+    // 1. Xử lý màu nền
+    Color currentBg = bgNormal;
+    if (isHover) currentBg = isDown ? bgPress : bgHover;
+
+    DrawRectangleRec(bounds, currentBg);
+
+    // 2. Tính toán vị trí text (Căn giữa theo chiều dọc, lùi vào trái 15px)
+    Vector2 textSize = MeasureTextEx(font, text, fontSize, 1.0f);
+    Vector2 textPos = {
+        bounds.x + 15.0f,
+        bounds.y + (bounds.height - textSize.y) / 2.0f
+    };
+
+    DrawTextEx(font, text, textPos, fontSize, 1.0f, textColor);
+
+    // 3. Callback
+    if (isHover && isClick && callback) callback();
+}
+
+
+
+void DrawBubbleChat(Rectangle bounds,
+                    const char* text,
+                    Font font,
+                    float fontSize,
+                    Color textColor,
+                    bool isMe) {
+    Vector2 measureTextEx = MeasureTextEx(font, text, fontSize, 1.0f);
+    printf("%f", measureTextEx.x);
+    printf("%f", bounds.x);
+    if (isMe) {
+        Rectangle bubble = {
+            200 + bounds.width - measureTextEx.x - 20,
+            bounds.y,
+            // measureTextEx.x + 20,
+            // measureTextEx.y + 20
+            bounds.width,
+            bounds.height
+        };
+        DrawRectangleRounded(bubble,0.3f, 10, ColorAlpha(WHITE, 0.5f));
+        DrawTextEx(font, text, (Vector2){bubble.x + 10, bubble.y + 10}, fontSize, 1.0f, textColor);
+    } else {
+        Rectangle bubble = {
+            200 + 20,
+            bounds.y,
+            measureTextEx.x + 20,
+            measureTextEx.y + 20
+        };
+        DrawRectangleRounded(bubble, 0.3f, 10, ColorAlpha(WHITE, 0.5f));
+        DrawTextEx(font, text, (Vector2){bubble.x + 10, bubble.y + 10}, fontSize, 1.0f, textColor);
     }
 }

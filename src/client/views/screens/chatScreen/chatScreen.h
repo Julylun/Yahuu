@@ -7,6 +7,8 @@
 #include "../../../utils/utils/utils.h"
 #include "../../components/components.h"
 
+void ChatScreen_init();
+void ChatScreen_load_data();
 void drawChatScreen();
 void drawChatList();
 void drawChatInput();

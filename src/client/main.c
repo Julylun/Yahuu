@@ -1,10 +1,18 @@
 #include <raylib.h>
 #include <stdio.h>
+#include <stdlib.h>
+#define RAYGUI_IMPLEMENTATION
+#include "views/raygui/raygui.h"
 #include "utils/constants/constants.h"
 #include "utils/fonts/fonts.h"
 #include "views/screenManager/screenManager.h"
-#include "services/networkService/networkService.h" // Include the network service
+#include "services/networkService/networkService.h"
+#include "services/messageService/messageService.h"
+#include "services/groupService/groupService.h"     // Include group service
+#include "views/screens/chatScreen/chatScreen.h" // Include the screen that handles chat logic
 #include "utils/debugger/debugger.h"
+
+
 
 int main()
 {
@@ -14,7 +22,7 @@ int main()
     loadFonts();
     InitAudioDevice();
     SetTargetFPS(WINDOW_FRAME);
-    toggleDebugMode();
+    // toggleDebugMode();
 
     // --- Network Init ---
     setDebugMessage("Attempting to connect to the server...\n");
@@ -25,6 +33,9 @@ int main()
         // If connection is successful, start the listener thread
         Network_start_listener();
         setDebugMessage("Connected to server");
+
+        // Initialize screen modules that need network services
+        // ChatScreen_init();
     }
 
     // Main game loop
@@ -33,14 +44,7 @@ int main()
         // --- Update logic ---
         updateScreen(); // Update your UI/game state
 
-        // A simple test to send a message to the server when you press ENTER
-        if (IsKeyPressed(KEY_ENTER))
-        {
-            printf("Sending a test message to the server...\n");
-            Network_send("Hello from the Raylib client!");
-        }
-
-        // --- Drawing ---
+       // --- Drawing ---
         BeginDrawing();
         // Your existing updateScreen probably handles drawing,
         // but if not, drawing code goes here.

@@ -44,4 +44,17 @@ void Network_clear_response();
  */
 void Network_get_response(char* buffer, int buffer_size);
 
+/**
+ * @brief Defines the function pointer type for handling asynchronous messages from the server.
+ */
+typedef void (*async_message_handler_t)(const char* message);
+
+/**
+ * @brief Registers a callback function to handle asynchronous messages from the server.
+ * Asynchronous messages (like RECEIVE_DM) will be passed to this handler
+ * instead of being placed in the standard response buffer.
+ * @param handler The function to call when an async message is received.
+ */
+void Network_set_async_message_handler(async_message_handler_t handler);
+
 #endif // NETWORK_SERVICE_H

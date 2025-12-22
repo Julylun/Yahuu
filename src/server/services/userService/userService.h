@@ -21,14 +21,17 @@ int UserService_createDocument();
  */
 long UserService_register(const char* username, const char* password);
 
+#include "../../models/usermodel/userModel.h" // For User struct
+
 /**
- * @brief Authenticates a user.
+ * @brief Authenticates a user and returns their data on success.
  * Verifies the given username and password against the database.
  * @param username The user's username.
  * @param password The user's plaintext password.
- * @return true on successful login, false otherwise.
+ * @return A pointer to a User struct on successful login, NULL otherwise.
+ *         The caller is responsible for freeing the returned User struct using User_free().
  */
-bool UserService_login(const char* username, const char* password);
+User* UserService_login(const char* username, const char* password);
 
 /**
  * @brief Deletes a user from the system by their ID.

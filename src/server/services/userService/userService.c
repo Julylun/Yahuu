@@ -11,10 +11,18 @@ int UserService_createDocument() {
         return -1;
     }
 
-    // Attempt to create the 'user' collection. 
+    // Attempt to create the 'user' collection.
     // Peach_collection_create is idempotent; it won't fail if the collection already exists.
+    Peach_collection_create("user", "id^username^password");
+
+    // Create collections for messaging features
+    Peach_collection_create("messages", "id^senderId^receiverId^message^time");
+    Peach_collection_create("groups", "groupId^groupName^ownerId");
+    Peach_collection_create("groupusers", "id^groupId^userId");
+    Peach_collection_create("groupmessages", "id^groupId^senderId^message^time");
+
     // It will, however, return -1 on other critical errors, which we pass up.
-    return Peach_collection_create("user", "id^username^password");
+    return 0;
 }
 
 long UserService_register(const char* username, const char* password) {
@@ -40,21 +48,26 @@ long UserService_register(const char* username, const char* password) {
     return User_create(&new_user_data);
 }
 
-bool UserService_login(const char* username, const char* password) {
+User* UserService_login(const char* username, const char* password) {
     if (username == NULL || password == NULL) {
-        return false;
+        return NULL;
     }
 
     User* stored_user = User_read_by_username(username);
     if (stored_user == NULL) {
-        return false; // User not found
+        return NULL; // User not found
     }
 
     // TODO: Use a secure hash comparison instead of strcmp.
-    bool success = (strcmp(password, stored_user->password) == 0);
-
-    User_free(stored_user);
-    return success;
+    if (strcmp(password, stored_user->password) == 0) {
+        // Passwords match, return the user struct.
+        // The caller is now responsible for freeing this memory.
+        return stored_user;
+    } else {
+        // Passwords do not match, free the struct and return NULL.
+        User_free(stored_user);
+        return NULL;
+    }
 }
 
 int UserService_delete(long id) {

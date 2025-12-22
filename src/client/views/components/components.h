@@ -58,4 +58,21 @@ TextButton CreateTextButton(Vector2 pos, const char *text, Font font, float font
 
 RoundedButton CreateRoundedButton(Rectangle rect, Color bgColor, Color hoverColor, Color pressedColor, const char *text, Font *font, float fontSize, ButtonCallback callback);
 void DrawRoundedButton(RoundedButton btn);
+
+
+void ChatListButton(
+    Rectangle bounds,
+    const char* text,
+    Font font, float fontSize,
+    Color bgNormal, Color bgHover, Color bgPress,
+    Color textColor,
+    ButtonCallback callback
+);
+
+void DrawBubbleChat(Rectangle bounds,
+                    const char* text,
+                    Font font,
+                    float fontSize,
+                    Color textColor,
+                    bool isMe);
 #endif

@@ -19,10 +19,15 @@ static bool g_is_connected = false;
 static char g_last_response[2048];
 static pthread_mutex_t g_response_mutex;
 
+// Callback function for asynchronous, server-pushed messages
+static async_message_handler_t g_async_handler = NULL;
+
+
 
 // The function that will run in the background to handle incoming messages
 static void* handleConnection(void* arg) {
     char server_message[2048];
+    const char* separator = "^";
     
     while (g_is_connected) {
         memset(server_message, 0, sizeof(server_message));
@@ -32,10 +37,30 @@ static void* handleConnection(void* arg) {
             server_message[recv_size] = '\0';
             printf("[Server Response]: %s\n", server_message);
 
-            // Safely store the response for other threads to read
-            pthread_mutex_lock(&g_response_mutex);
-            strncpy(g_last_response, server_message, sizeof(g_last_response) - 1);
-            pthread_mutex_unlock(&g_response_mutex);
+            // Make a copy to safely parse the command
+            char* msg_copy = strdup(server_message);
+            if (msg_copy == NULL) { continue; } // strdup failed
+            char* command = strtok(msg_copy, separator);
+
+            bool is_async = false;
+            if(command != NULL) {
+                // Add any future async commands here
+                if (strcmp(command, "RECEIVE_DM") == 0 || strcmp(command, "RECEIVE_GROUP_MSG") == 0) {
+                    is_async = true;
+                }
+            }
+            free(msg_copy);
+
+            if (is_async && g_async_handler != NULL) {
+                // This is a pushed message from the server, use the callback
+                g_async_handler(server_message);
+            } else {
+                // This is a direct reply to a client command, store it in the buffer
+                pthread_mutex_lock(&g_response_mutex);
+                strncpy(g_last_response, server_message, sizeof(g_last_response) - 1);
+                g_last_response[sizeof(g_last_response) - 1] = '\0'; // Ensure null-termination
+                pthread_mutex_unlock(&g_response_mutex);
+            }
 
         } else {
             // Server closed connection or an error occurred
@@ -121,6 +146,10 @@ void Network_clear_response() {
     pthread_mutex_lock(&g_response_mutex);
     memset(g_last_response, 0, sizeof(g_last_response));
     pthread_mutex_unlock(&g_response_mutex);
+}
+
+void Network_set_async_message_handler(async_message_handler_t handler) {
+    g_async_handler = handler;
 }
 
 void Network_get_response(char* buffer, int buffer_size) {
