@@ -8,6 +8,8 @@ set(SERVER_SRC_DIR src/server)
 set(SERVER_SOURCES
     ${SERVER_SRC_DIR}/main.c
     ${SERVER_SRC_DIR}/services/peachdb/peachdb.c
+    ${SERVER_SRC_DIR}/services/peachdb/functions/files/files.c
+    ${SERVER_SRC_DIR}/services/peachdb/functions/debugger/debugger.c
 )
 
 # Server: Phải link với sqlite3 và pthread

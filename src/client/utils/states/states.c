@@ -1,6 +1,6 @@
 #include "states.h"
 
-enum ScreenState g_screenState = CHAT;
+enum ScreenState g_screenState = LOGIN;
 
 void changeScreenState(enum ScreenState newState)
 {
