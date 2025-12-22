@@ -1,8 +1,31 @@
 #include "loginScreen.h"
+#include <raylib.h>
+
+
+static char dynamic_login_usernameValue[100] = "";
+static bool dynamic_login_usernameIsActive = false;
+static char dynamic_login_passwordValue[100] = "";
+static bool dynamic_login_passwordIsActive = false;
+void login()
+{
+    bool status = AuthService_login(dynamic_login_usernameValue, dynamic_login_passwordValue);
+    if (status) {
+        changeScreenState(CHAT);
+    } else {
+        setDebugMessage("Login failed!!!");
+    }
+}
 
 void drawLoginScreen()
 {
     // Init
+    static Texture2D icon;
+    static bool isInitialized = false;
+    if (!isInitialized)
+    {
+        icon = loadResizeImage("assets/icon.png", 80, 80);
+        isInitialized = true;
+    }
 
 
     //# Draw components
@@ -32,7 +55,6 @@ void drawLoginScreen()
     };
     DrawRectangleRounded(IconShape,0.1f,3, ColorAlpha(COLOR_DARKTHEME_PURPLE, 0.15f));
 
-    Texture2D icon = loadResizeImage("assets/icon.png", 80, 80);
     DrawTexture(
         icon,
         WINDOW_SCREEN_WIDTH/2 - icon.width/2,
@@ -43,17 +65,15 @@ void drawLoginScreen()
 
     // Draw Welcome Text
     const char* WelcomeText = "Welcome to Yahuu";
-    const int WelComeText_FontSize = 30;
-    const Font Font_OpenSans_Bold = LoadFontEx("assets/fonts/opensans/OpenSans-SemiBold.ttf", WelComeText_FontSize, 0, 0);
     Vector2 WelcomeTextPosition = {
-        WINDOW_SCREEN_WIDTH/2 - MeasureTextEx(Font_OpenSans_Bold,WelcomeText, WelComeText_FontSize, 2.5f).x/2,
+        WINDOW_SCREEN_WIDTH/2 - MeasureTextEx(Font_Opensans_Bold_30,WelcomeText, 30, 2.5f).x/2,
         LoginPanelShape.y + Icon_AlignY + IconHeight + 20
     };
     DrawTextEx(
-        Font_OpenSans_Bold,
+        Font_Opensans_Bold_30,
         WelcomeText,
         WelcomeTextPosition,
-        WelComeText_FontSize,
+        30,
         2.5f,
         WHITE
     );
@@ -61,13 +81,12 @@ void drawLoginScreen()
 
     //Draw Textfiled
     const int Spacing_TextFieldTitle = 1.0f;
-    Font Font_OpenSans_Regular = LoadFontEx("assets/fonts/opensans/OpenSans-Regular.ttf", 20, 0, 0);
     const Vector2 Position_UsernameTextField = {
         LoginPanelShape.x + 30,
         LoginPanelShape.y + Icon_AlignY + IconHeight + 100
     };
     DrawTextEx(
-        Font_OpenSans_Regular,
+        Font_Opensans_Regular_20,
         "Username",
         Position_UsernameTextField,
         20,
@@ -82,9 +101,7 @@ void drawLoginScreen()
         30
     };
     char usernamePlaceholder[] = "Enter your username";
-    static char dynamic_usernameValue[100] = "";
-    static bool dynamic_usernameIsActive = false;
-    TextField usernameTextField = createTextField(usernamePlaceholder, dynamic_usernameValue, &dynamic_usernameIsActive, usernameTextFieldBounds, 0.2f, 10.0f, &Font_OpenSans_Regular);
+   TextField usernameTextField = createTextField(usernamePlaceholder, dynamic_login_usernameValue, &dynamic_login_usernameIsActive, usernameTextFieldBounds, 0.2f, 10.0f, &Font_Opensans_Regular_20);
     drawTextField(&usernameTextField);
 
     const Vector2 Position_PasswordTextField = {
@@ -93,7 +110,7 @@ void drawLoginScreen()
     };
 
     DrawTextEx(
-        Font_OpenSans_Regular,
+        Font_Opensans_Regular_20,
         "Password",
         Position_PasswordTextField,
         20,
@@ -109,9 +126,7 @@ void drawLoginScreen()
         30
     };
     char passwordPlaceholder[] = "Enter your password";
-    static char dynamic_passwordValue[100] = "";
-    static bool dynamic_passwordIsActive = false;
-    TextField passwordTextField = createTextField(passwordPlaceholder, dynamic_passwordValue, &dynamic_passwordIsActive, passwordTextFieldBounds, 0.2f, 10.0f, &Font_OpenSans_Regular);
+   TextField passwordTextField = createTextField(passwordPlaceholder, dynamic_login_passwordValue, &dynamic_login_passwordIsActive, passwordTextFieldBounds, 0.2f, 10.0f, &Font_Opensans_Regular_20);
     drawTextField(&passwordTextField);
 
 
@@ -129,16 +144,16 @@ void drawLoginScreen()
         COLOR_DARKTHEME_BLACK,
         COLOR_DARKTHEME_BLACK,
         "Login",
-        &Font_OpenSans_Regular,
+        &Font_Opensans_Regular_20,
         20,
-        0
+        login
     );
     DrawRoundedButton(loginButton);
 
 
     // ## Draw register button
     char registerButtonLabel[] = "Register";
-    Vector2 registerButtonMeasure = MeasureTextEx(Font_OpenSans_Bold, registerButtonLabel, 20, 0);
+    Vector2 registerButtonMeasure = MeasureTextEx(Font_Opensans_Bold_20, registerButtonLabel, 20, 0);
     Vector2 registerButtonPosition = {
         LoginPanelShape.x + LoginPanelShape.width / 2 - registerButtonMeasure.x / 2,
         LoginPanelShape.y + LoginPanelShape.height - 40
@@ -147,7 +162,7 @@ void drawLoginScreen()
     TextButton registerButton = CreateTextButton(
         registerButtonPosition,
         registerButtonLabel,
-        Font_OpenSans_Bold,
+        Font_Opensans_Bold_20,
         20,
         COLOR_DARKTHEME_PURPLE,
         COLOR_DARKTHEME_BLACK,

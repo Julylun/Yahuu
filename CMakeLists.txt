@@ -10,6 +10,9 @@ set(SERVER_SOURCES
     ${SERVER_SRC_DIR}/services/peachdb/peachdb.c
     ${SERVER_SRC_DIR}/services/peachdb/functions/files/files.c
     ${SERVER_SRC_DIR}/services/peachdb/functions/debugger/debugger.c
+    ${SERVER_SRC_DIR}/models/usermodel/userModel.c
+    ${SERVER_SRC_DIR}/services/userService/userService.c
+    ${SERVER_SRC_DIR}/services/socketService/socketService.c
 )
 
 # Server: Phải link với sqlite3 và pthread
@@ -33,6 +36,8 @@ set(CLIENT_SOURCES
     ${CLIENT_SRC_DIR}/views/components/components.c
     ${CLIENT_SRC_DIR}/controllers/loginController/loginController.c
     ${CLIENT_SRC_DIR}/controllers/registerController/registerController.c
+    ${CLIENT_SRC_DIR}/services/networkService/networkService.c
+    ${CLIENT_SRC_DIR}/services/authService/authService.c
 )
 
 add_executable(client ${CLIENT_SOURCES})

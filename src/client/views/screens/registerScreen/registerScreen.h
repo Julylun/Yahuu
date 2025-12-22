@@ -5,8 +5,12 @@
 #include "../../../utils/utils/utils.h"
 #include "../../components/components.h"
 #include "../../../controllers/registerController/registerController.h"
+#include "../../../services/authService/authService.h"
+#include "../../../utils/debugger/debugger.h"
+#include "../../../utils/fonts/fonts.h"
+#include "../../../utils/states/states.h"
 
 
 void drawRegisterScreen();
-
+void signup();
 #endif

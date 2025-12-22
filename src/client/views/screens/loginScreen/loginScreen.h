@@ -6,6 +6,9 @@
 #include "../../../utils/utils/utils.h"
 #include "../../components/components.h"
 #include "../../../controllers/loginController/loginController.h"
+#include "../../../utils/fonts/fonts.h"
+#include "../../../services/authService/authService.h"
+#include "../../../utils/states/states.h"
 
 void drawLoginScreen();
 
