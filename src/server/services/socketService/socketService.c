@@ -248,6 +248,19 @@ static void* client_handler(void* socket_desc) {
             } else {
                 snprintf(response, sizeof(response), "USER_INFO_FAIL^INSUFFICIENT_ARGS");
             }
+        } else if (strcmp(command, "SEARCH_USER") == 0) {
+            char* username = strtok(NULL, separator);
+            if (username && strlen(username) > 0) {
+                User* user = User_read_by_username(username);
+                if (user != NULL) {
+                    snprintf(response, sizeof(response), "SEARCH_USER_SUCCESS^%ld^%s", user->id, user->username);
+                    User_free(user);
+                } else {
+                    snprintf(response, sizeof(response), "SEARCH_USER_FAIL^USER_NOT_FOUND");
+                }
+            } else {
+                snprintf(response, sizeof(response), "SEARCH_USER_FAIL^INSUFFICIENT_ARGS");
+            }
         } else {
             snprintf(response, sizeof(response), "ERROR^UNKNOWN_COMMAND");
         }

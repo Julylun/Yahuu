@@ -200,3 +200,51 @@ bool MessageService_get_user_info(long userId, char* out_username, int buffer_si
     fprintf(stderr, "MessageService: Timed out waiting for user info response.\n");
     return false;
 }
+
+bool MessageService_search_user(const char* username, long* out_userId, char* out_username, int buffer_size) {
+    if (username == NULL || strlen(username) == 0) return false;
+    if (out_userId != NULL) *out_userId = -1;
+    if (out_username != NULL && buffer_size > 0) out_username[0] = '\0';
+
+    char command[512];
+    snprintf(command, sizeof(command), "SEARCH_USER^%s", username);
+
+    Network_clear_response();
+    if (Network_send(command) != 0) {
+        fprintf(stderr, "MessageService: Failed to send SEARCH_USER command.\n");
+        return false;
+    }
+
+    char response[1024];
+    const char* success_prefix = "SEARCH_USER_SUCCESS^";
+
+    for (int i = 0; i < 20; i++) { // 2 second timeout
+        usleep(100000);
+        memset(response, 0, sizeof(response));
+        Network_get_response(response, sizeof(response));
+
+        if (strlen(response) > 0) {
+            if (strncmp(response, success_prefix, strlen(success_prefix)) == 0) {
+                // Parse: SEARCH_USER_SUCCESS^userId^username
+                char* data_str = response + strlen(success_prefix);
+                char* saveptr = NULL;
+                char* userId_str = strtok_r(data_str, "^", &saveptr);
+                char* username_str = strtok_r(NULL, "^", &saveptr);
+
+                if (userId_str != NULL && username_str != NULL) {
+                    if (out_userId != NULL) *out_userId = atol(userId_str);
+                    if (out_username != NULL && buffer_size > 0) {
+                        strncpy(out_username, username_str, buffer_size - 1);
+                        out_username[buffer_size - 1] = '\0';
+                    }
+                    return true;
+                }
+            }
+            // User not found or error
+            return false;
+        }
+    }
+
+    fprintf(stderr, "MessageService: Timed out waiting for search user response.\n");
+    return false;
+}

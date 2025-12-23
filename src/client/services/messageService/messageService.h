@@ -42,4 +42,15 @@ long* MessageService_get_contacts(int* count);
  */
 bool MessageService_get_user_info(long userId, char* out_username, int buffer_size);
 
+/**
+ * @brief Searches for a user by their exact username.
+ * This is a blocking call that sends the request and waits for the response.
+ * @param username The username to search for.
+ * @param out_userId Pointer to store the found user's ID.
+ * @param out_username Buffer to store the found username (should be at least 256 bytes).
+ * @param buffer_size Size of the out_username buffer.
+ * @return true if user found, false otherwise.
+ */
+bool MessageService_search_user(const char* username, long* out_userId, char* out_username, int buffer_size);
+
 #endif // MESSAGE_SERVICE_H

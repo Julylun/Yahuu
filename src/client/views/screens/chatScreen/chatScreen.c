@@ -34,6 +34,15 @@ static ChatMessage g_chat_messages[2048];
 static int g_chat_message_count = 0;
 static bool g_should_scroll_to_bottom = false; // Flag to auto-scroll when new messages arrive
 
+// New Chat Dialog state
+static bool g_show_new_chat_dialog = false;
+static char g_new_chat_search_input[256] = "";
+static bool g_new_chat_search_active = false;
+static bool g_new_chat_search_done = false;
+static bool g_new_chat_user_found = false;
+static long g_new_chat_found_user_id = -1;
+static char g_new_chat_found_username[256] = "";
+
 // --- Helper Functions ---
 static void parse_and_load_messages(const char* history_data) {
     g_chat_message_count = 0;
@@ -167,6 +176,16 @@ void drawChatListPanel()
 
     Rectangle Position_NewChatButton = { Panel_ChatList.width/2 - 85, 60, 170, 40 };
     char Text_NewChatTitle[] = "New Chat";
+    
+    // Check if New Chat button is clicked
+    Vector2 mousePos_btn = GetMousePosition();
+    if (CheckCollisionPointRec(mousePos_btn, Position_NewChatButton) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+        g_show_new_chat_dialog = true;
+        g_new_chat_search_done = false;
+        g_new_chat_user_found = false;
+        memset(g_new_chat_search_input, 0, sizeof(g_new_chat_search_input));
+    }
+    
     DrawRoundedButton(CreateRoundedButton(Position_NewChatButton, COLOR_DARKTHEME_PURPLE, COLOR_DARKTHEME_BLACK, COLOR_DARKTHEME_GRAY, Text_NewChatTitle, &Font_Opensans_Bold_17, 15, 0));
 
     Rectangle Position_JoinRoomButton = { Panel_ChatList.width/2 - 85, 110, 170, 40 };
@@ -328,8 +347,123 @@ void drawChatSection()
     }
 }
 
+static void drawNewChatDialog()
+{
+    if (!g_show_new_chat_dialog) return;
+    
+    // Draw semi-transparent overlay
+    DrawRectangle(0, 0, WINDOW_SCREEN_WIDTH, WINDOW_SCREEN_HEIGHT, ColorAlpha(BLACK, 0.7f));
+    
+    // Dialog box
+    float dialogWidth = 400;
+    float dialogHeight = 250;
+    Rectangle dialogRect = {
+        WINDOW_SCREEN_WIDTH / 2 - dialogWidth / 2,
+        WINDOW_SCREEN_HEIGHT / 2 - dialogHeight / 2,
+        dialogWidth,
+        dialogHeight
+    };
+    DrawRectangleRounded(dialogRect, 0.1f, 10, COLOR_DARKTHEME_GRAY);
+    
+    // Title
+    const char* title = "New Chat";
+    Vector2 titleSize = MeasureTextEx(Font_Opensans_Bold_20, title, 20, 1);
+    Vector2 titlePos = { dialogRect.x + dialogRect.width / 2 - titleSize.x / 2, dialogRect.y + 20 };
+    DrawTextEx(Font_Opensans_Bold_20, title, titlePos, 20, 1, WHITE);
+    
+    // Search label
+    Vector2 labelPos = { dialogRect.x + 30, dialogRect.y + 60 };
+    DrawTextEx(Font_Opensans_Regular_20, "Enter username:", labelPos, 18, 1, WHITE);
+    
+    // Search input field
+    Rectangle searchInputRect = {
+        dialogRect.x + 30,
+        dialogRect.y + 90,
+        dialogRect.width - 60,
+        35
+    };
+    TextField searchField = createTextField(
+        "Type username...",
+        g_new_chat_search_input,
+        &g_new_chat_search_active,
+        searchInputRect,
+        0.3f,
+        10.0f,
+        &Font_Opensans_Regular_20
+    );
+    drawTextField(&searchField);
+    
+    // Handle Enter key to search
+    if (g_new_chat_search_active && IsKeyPressed(KEY_ENTER) && strlen(g_new_chat_search_input) > 0) {
+        g_new_chat_user_found = MessageService_search_user(
+            g_new_chat_search_input,
+            &g_new_chat_found_user_id,
+            g_new_chat_found_username,
+            sizeof(g_new_chat_found_username)
+        );
+        g_new_chat_search_done = true;
+    }
+    
+    // Show search result
+    if (g_new_chat_search_done) {
+        Vector2 resultPos = { dialogRect.x + 30, dialogRect.y + 135 };
+        
+        if (g_new_chat_user_found) {
+            DrawTextEx(Font_Opensans_Regular_20, TextFormat("Found: %s", g_new_chat_found_username), resultPos, 18, 1, (Color){100, 255, 100, 255});
+            
+            // Start Chat button
+            Rectangle startChatBtn = {
+                dialogRect.x + dialogRect.width / 2 - 80,
+                dialogRect.y + 165,
+                160,
+                35
+            };
+            
+            Vector2 mousePos = GetMousePosition();
+            bool btnHover = CheckCollisionPointRec(mousePos, startChatBtn);
+            Color btnColor = btnHover ? COLOR_DARKTHEME_BLACK : COLOR_DARKTHEME_PURPLE;
+            
+            DrawRectangleRounded(startChatBtn, 0.3f, 10, btnColor);
+            Vector2 btnTextSize = MeasureTextEx(Font_Opensans_Bold_17, "Start Chat", 17, 1);
+            Vector2 btnTextPos = {
+                startChatBtn.x + startChatBtn.width / 2 - btnTextSize.x / 2,
+                startChatBtn.y + startChatBtn.height / 2 - btnTextSize.y / 2
+            };
+            DrawTextEx(Font_Opensans_Bold_17, "Start Chat", btnTextPos, 17, 1, WHITE);
+            
+            if (btnHover && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+                // Add contact and start chat
+                add_contact_if_not_exists(g_new_chat_found_user_id);
+                g_current_chat_contact_id = g_new_chat_found_user_id;
+                strncpy(g_current_chat_contact_name, g_new_chat_found_username, sizeof(g_current_chat_contact_name) - 1);
+                g_chat_message_count = 0; // Clear messages for new chat
+                g_show_new_chat_dialog = false;
+            }
+        } else {
+            DrawTextEx(Font_Opensans_Regular_20, "User not found", resultPos, 18, 1, (Color){255, 100, 100, 255});
+        }
+    }
+    
+    // Close button (X)
+    Rectangle closeBtn = { dialogRect.x + dialogRect.width - 35, dialogRect.y + 10, 25, 25 };
+    Vector2 mousePos = GetMousePosition();
+    bool closeHover = CheckCollisionPointRec(mousePos, closeBtn);
+    
+    DrawTextEx(Font_Opensans_Bold_20, "X", (Vector2){ closeBtn.x + 5, closeBtn.y + 2 }, 20, 1, closeHover ? RED : WHITE);
+    
+    if (closeHover && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+        g_show_new_chat_dialog = false;
+    }
+    
+    // Also close on ESC
+    if (IsKeyPressed(KEY_ESCAPE)) {
+        g_show_new_chat_dialog = false;
+    }
+}
+
 void drawChatScreen()
 {
     drawChatListPanel();
     drawChatSection();
+    drawNewChatDialog(); // Draw dialog on top
 }
