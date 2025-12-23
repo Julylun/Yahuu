@@ -53,4 +53,47 @@ bool MessageService_get_user_info(long userId, char* out_username, int buffer_si
  */
 bool MessageService_search_user(const char* username, long* out_userId, char* out_username, int buffer_size);
 
+// ============ GROUP/ROOM FUNCTIONS ============
+
+/**
+ * @brief Creates a new group/room.
+ * @param groupName The name for the new group.
+ * @param out_groupId Pointer to store the created group's ID.
+ * @return true on success, false on failure.
+ */
+bool MessageService_create_group(const char* groupName, long* out_groupId);
+
+/**
+ * @brief Joins an existing group by ID.
+ * @param groupId The ID of the group to join.
+ * @param out_groupName Buffer to store the group name.
+ * @param buffer_size Size of the buffer.
+ * @return true on success, false on failure.
+ */
+bool MessageService_join_group(long groupId, char* out_groupName, int buffer_size);
+
+/**
+ * @brief Gets all groups the current user is a member of.
+ * @param out_groupIds Array to store group IDs (should be at least 256 elements).
+ * @param out_groupNames Array of strings to store group names.
+ * @param max_groups Maximum number of groups to return.
+ * @return Number of groups found.
+ */
+int MessageService_get_my_groups(long* out_groupIds, char out_groupNames[][256], int max_groups);
+
+/**
+ * @brief Gets message history for a group.
+ * @param groupId The ID of the group.
+ * @return Dynamically allocated string containing history, or NULL. Caller must free.
+ */
+char* MessageService_get_group_history(long groupId);
+
+/**
+ * @brief Sends a message to a group.
+ * @param groupId The ID of the group.
+ * @param message The message content.
+ * @return true on success, false on failure.
+ */
+bool MessageService_send_group_message(long groupId, const char* message);
+
 #endif // MESSAGE_SERVICE_H

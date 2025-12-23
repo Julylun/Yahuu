@@ -248,3 +248,191 @@ bool MessageService_search_user(const char* username, long* out_userId, char* ou
     fprintf(stderr, "MessageService: Timed out waiting for search user response.\n");
     return false;
 }
+
+// ============ GROUP/ROOM FUNCTIONS ============
+
+bool MessageService_create_group(const char* groupName, long* out_groupId) {
+    if (groupName == NULL || strlen(groupName) == 0) return false;
+    if (out_groupId != NULL) *out_groupId = -1;
+
+    char command[512];
+    snprintf(command, sizeof(command), "CREATE_GROUP^%s", groupName);
+
+    Network_clear_response();
+    if (Network_send(command) != 0) {
+        fprintf(stderr, "MessageService: Failed to send CREATE_GROUP command.\n");
+        return false;
+    }
+
+    char response[1024];
+    const char* success_prefix = "CREATE_GROUP_SUCCESS^";
+
+    for (int i = 0; i < 20; i++) {
+        usleep(100000);
+        memset(response, 0, sizeof(response));
+        Network_get_response(response, sizeof(response));
+
+        if (strlen(response) > 0) {
+            if (strncmp(response, success_prefix, strlen(success_prefix)) == 0) {
+                char* data_str = response + strlen(success_prefix);
+                char* saveptr = NULL;
+                char* groupId_str = strtok_r(data_str, "^", &saveptr);
+                if (groupId_str != NULL && out_groupId != NULL) {
+                    *out_groupId = atol(groupId_str);
+                }
+                return true;
+            }
+            return false;
+        }
+    }
+    return false;
+}
+
+bool MessageService_join_group(long groupId, char* out_groupName, int buffer_size) {
+    if (out_groupName != NULL && buffer_size > 0) out_groupName[0] = '\0';
+
+    char command[256];
+    snprintf(command, sizeof(command), "JOIN_GROUP^%ld", groupId);
+
+    Network_clear_response();
+    if (Network_send(command) != 0) {
+        fprintf(stderr, "MessageService: Failed to send JOIN_GROUP command.\n");
+        return false;
+    }
+
+    char response[1024];
+    const char* success_prefix = "JOIN_GROUP_SUCCESS^";
+
+    for (int i = 0; i < 20; i++) {
+        usleep(100000);
+        memset(response, 0, sizeof(response));
+        Network_get_response(response, sizeof(response));
+
+        if (strlen(response) > 0) {
+            if (strncmp(response, success_prefix, strlen(success_prefix)) == 0) {
+                // Parse: JOIN_GROUP_SUCCESS^groupId^groupName
+                char* data_str = response + strlen(success_prefix);
+                char* saveptr = NULL;
+                char* gid_str = strtok_r(data_str, "^", &saveptr);
+                char* gname_str = strtok_r(NULL, "^", &saveptr);
+                if (gname_str != NULL && out_groupName != NULL && buffer_size > 0) {
+                    strncpy(out_groupName, gname_str, buffer_size - 1);
+                    out_groupName[buffer_size - 1] = '\0';
+                }
+                return true;
+            }
+            return false;
+        }
+    }
+    return false;
+}
+
+int MessageService_get_my_groups(long* out_groupIds, char out_groupNames[][256], int max_groups) {
+    const char* command = "GET_MY_GROUPS";
+
+    Network_clear_response();
+    if (Network_send(command) != 0) {
+        fprintf(stderr, "MessageService: Failed to send GET_MY_GROUPS command.\n");
+        return 0;
+    }
+
+    char response[8192];
+    const char* success_prefix = "MY_GROUPS_DATA^";
+
+    for (int i = 0; i < 20; i++) {
+        usleep(100000);
+        memset(response, 0, sizeof(response));
+        Network_get_response(response, sizeof(response));
+
+        if (strlen(response) > 0) {
+            if (strncmp(response, success_prefix, strlen(success_prefix)) == 0) {
+                char* data_str = response + strlen(success_prefix);
+                if (strlen(data_str) == 0) return 0;
+
+                int count = 0;
+                char* data_copy = strdup(data_str);
+                char* outer_saveptr = NULL;
+                char* token = strtok_r(data_copy, ";", &outer_saveptr);
+
+                while (token != NULL && count < max_groups) {
+                    char* inner_saveptr = NULL;
+                    char* token_copy = strdup(token);
+                    char* gid_str = strtok_r(token_copy, ",", &inner_saveptr);
+                    char* gname_str = strtok_r(NULL, ",", &inner_saveptr);
+
+                    if (gid_str != NULL && gname_str != NULL) {
+                        out_groupIds[count] = atol(gid_str);
+                        strncpy(out_groupNames[count], gname_str, 255);
+                        out_groupNames[count][255] = '\0';
+                        count++;
+                    }
+                    free(token_copy);
+                    token = strtok_r(NULL, ";", &outer_saveptr);
+                }
+                free(data_copy);
+                return count;
+            }
+            return 0;
+        }
+    }
+    return 0;
+}
+
+char* MessageService_get_group_history(long groupId) {
+    char command[256];
+    snprintf(command, sizeof(command), "GET_GROUP_HISTORY^%ld", groupId);
+
+    Network_clear_response();
+    if (Network_send(command) != 0) {
+        fprintf(stderr, "MessageService: Failed to send GET_GROUP_HISTORY command.\n");
+        return NULL;
+    }
+
+    char response[16384];
+    const char* success_prefix = "GROUP_HISTORY_DATA^";
+
+    for (int i = 0; i < 40; i++) {
+        usleep(100000);
+        memset(response, 0, sizeof(response));
+        Network_get_response(response, sizeof(response));
+
+        if (strlen(response) > 0) {
+            if (strncmp(response, success_prefix, strlen(success_prefix)) == 0) {
+                char* data = response + strlen(success_prefix);
+                return strdup(data);
+            }
+            return NULL;
+        }
+    }
+    return NULL;
+}
+
+bool MessageService_send_group_message(long groupId, const char* message) {
+    if (message == NULL || strlen(message) == 0) return false;
+
+    char command[2048];
+    snprintf(command, sizeof(command), "SEND_GROUP_MSG^%ld^%s", groupId, message);
+
+    Network_clear_response();
+    if (Network_send(command) != 0) {
+        fprintf(stderr, "MessageService: Failed to send SEND_GROUP_MSG command.\n");
+        return false;
+    }
+
+    char response[1024];
+    const char* success_prefix = "SEND_GROUP_MSG_SUCCESS";
+
+    for (int i = 0; i < 20; i++) {
+        usleep(100000);
+        memset(response, 0, sizeof(response));
+        Network_get_response(response, sizeof(response));
+
+        if (strlen(response) > 0) {
+            if (strncmp(response, success_prefix, strlen(success_prefix)) == 0) {
+                return true;
+            }
+            return false;
+        }
+    }
+    return false;
+}

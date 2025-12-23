@@ -12,6 +12,7 @@
 // --- Module State ---
 typedef struct {
     long sender_id;
+    char sender_name[256]; // Username of sender (for room messages)
     char message[1024];
     char time[32];
     bool is_me; // NOTE: is_me logic requires knowing our own user ID.
@@ -43,6 +44,25 @@ static bool g_new_chat_user_found = false;
 static long g_new_chat_found_user_id = -1;
 static char g_new_chat_found_username[256] = "";
 
+// Room/Group state
+typedef struct {
+    long id;
+    char name[256];
+} RoomInfo;
+
+static RoomInfo g_rooms[256];
+static int g_room_count = 0;
+static bool g_is_current_chat_room = false; // true if chatting in a room, false for DM
+
+// Room Dialog state
+static bool g_show_room_dialog = false;
+static int g_room_dialog_mode = 0; // 0 = menu, 1 = create, 2 = join
+static char g_room_input[256] = "";
+static bool g_room_input_active = false;
+static bool g_room_action_done = false;
+static bool g_room_action_success = false;
+static char g_room_action_message[256] = "";
+
 // --- Helper Functions ---
 static void parse_and_load_messages(const char* history_data) {
     g_chat_message_count = 0;
@@ -72,6 +92,7 @@ static void parse_and_load_messages(const char* history_data) {
             strncpy(msg->time, time_str, sizeof(msg->time) - 1);
             msg->time[sizeof(msg->time) - 1] = '\0';
             msg->is_me = (msg->sender_id == g_my_user_id);
+            msg->sender_name[0] = '\0'; // Will be populated later for rooms
             g_chat_message_count++;
         }
         
@@ -102,6 +123,32 @@ static void add_contact_if_not_exists(long contactId) {
     }
 }
 
+// Helper to get username by ID (with caching)
+static void get_username_by_id(long userId, char* out_name, int buffer_size) {
+    if (out_name == NULL || buffer_size <= 0) return;
+    
+    // Check if it's me
+    if (userId == g_my_user_id) {
+        strncpy(out_name, "Me", buffer_size - 1);
+        out_name[buffer_size - 1] = '\0';
+        return;
+    }
+    
+    // Check in contacts cache
+    for (int i = 0; i < g_contact_count; i++) {
+        if (g_contacts[i].id == userId) {
+            strncpy(out_name, g_contacts[i].username, buffer_size - 1);
+            out_name[buffer_size - 1] = '\0';
+            return;
+        }
+    }
+    
+    // Not in cache, fetch from server
+    if (!MessageService_get_user_info(userId, out_name, buffer_size)) {
+        snprintf(out_name, buffer_size, "User %ld", userId);
+    }
+}
+
 // --- Async Message Handler ---
 static void handle_async_messages(const char* message) {
     char* msg_copy = strdup(message);
@@ -118,16 +165,40 @@ static void handle_async_messages(const char* message) {
                 long senderId = atol(senderId_str);
                 add_contact_if_not_exists(senderId);
 
-                if (senderId == g_current_chat_contact_id && g_chat_message_count < 2048) {
+                if (!g_is_current_chat_room && senderId == g_current_chat_contact_id && g_chat_message_count < 2048) {
                     ChatMessage* msg = &g_chat_messages[g_chat_message_count];
                     msg->sender_id = senderId;
                     strncpy(msg->message, msg_content, sizeof(msg->message) - 1);
                     msg->message[sizeof(msg->message) - 1] = '\0';
                     strcpy(msg->time, "Just now");
                     msg->is_me = false; // Message from others
+                    msg->sender_name[0] = '\0'; // Not needed for DM
                     g_chat_message_count++;
-                    g_should_scroll_to_bottom = true; // Auto-scroll when receiving new message
-                    printf("ChatScreen: Received message from %ld\n", senderId);
+                    g_should_scroll_to_bottom = true;
+                    printf("ChatScreen: Received DM from %ld\n", senderId);
+                }
+            }
+        } else if (strcmp(command, "RECEIVE_GROUP_MSG") == 0) {
+            char* groupId_str = strtok(NULL, separator);
+            char* senderId_str = strtok(NULL, separator);
+            char* msg_content = strtok(NULL, separator);
+            if (groupId_str && senderId_str && msg_content) {
+                long groupId = atol(groupId_str);
+                long senderId = atol(senderId_str);
+
+                // If we're currently viewing this room, add the message
+                if (g_is_current_chat_room && groupId == g_current_chat_contact_id && g_chat_message_count < 2048) {
+                    ChatMessage* msg = &g_chat_messages[g_chat_message_count];
+                    msg->sender_id = senderId;
+                    strncpy(msg->message, msg_content, sizeof(msg->message) - 1);
+                    msg->message[sizeof(msg->message) - 1] = '\0';
+                    strcpy(msg->time, "Just now");
+                    msg->is_me = (senderId == g_my_user_id);
+                    // Get sender username for room message
+                    get_username_by_id(senderId, msg->sender_name, sizeof(msg->sender_name));
+                    g_chat_message_count++;
+                    g_should_scroll_to_bottom = true;
+                    printf("ChatScreen: Received group message in room %ld from %ld\n", groupId, senderId);
                 }
             }
         }
@@ -146,6 +217,7 @@ void drawChatListPanel()
         g_my_user_id = AuthService_get_current_user_id();
         printf("ChatScreen: Initialized with user ID: %ld\n", g_my_user_id);
 
+        // Load contacts (DMs)
         int count = 0;
         long* contact_ids = MessageService_get_contacts(&count);
         if (contact_ids != NULL) {
@@ -160,6 +232,18 @@ void drawChatListPanel()
             g_contact_count = num_contacts;
             free(contact_ids);
         }
+        
+        // Load rooms/groups
+        long room_ids[256];
+        char room_names[256][256];
+        g_room_count = MessageService_get_my_groups(room_ids, room_names, 256);
+        for (int i = 0; i < g_room_count; i++) {
+            g_rooms[i].id = room_ids[i];
+            strncpy(g_rooms[i].name, room_names[i], sizeof(g_rooms[i].name) - 1);
+            g_rooms[i].name[sizeof(g_rooms[i].name) - 1] = '\0';
+        }
+        printf("ChatScreen: Loaded %d rooms.\n", g_room_count);
+        
         isInitialized = true;
     }
 
@@ -189,12 +273,22 @@ void drawChatListPanel()
     DrawRoundedButton(CreateRoundedButton(Position_NewChatButton, COLOR_DARKTHEME_PURPLE, COLOR_DARKTHEME_BLACK, COLOR_DARKTHEME_GRAY, Text_NewChatTitle, &Font_Opensans_Bold_17, 15, 0));
 
     Rectangle Position_JoinRoomButton = { Panel_ChatList.width/2 - 85, 110, 170, 40 };
-    char Text_JoinRoomTitle[] = "Join Room";
+    char Text_JoinRoomTitle[] = "Rooms";
+    
+    // Check if Join Room button is clicked
+    if (CheckCollisionPointRec(mousePos_btn, Position_JoinRoomButton) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+        g_show_room_dialog = true;
+        g_room_dialog_mode = 0; // Show menu
+        g_room_action_done = false;
+        memset(g_room_input, 0, sizeof(g_room_input));
+    }
+    
     DrawRoundedButton(CreateRoundedButton(Position_JoinRoomButton, COLOR_DARKTHEME_PURPLE, COLOR_DARKTHEME_BLACK, COLOR_DARKTHEME_GRAY, Text_JoinRoomTitle, &Font_Opensans_Bold_17, 15, 0));
 
     Rectangle Position_GuiListView = { 0, 180, Panel_ChatList.width, 420 };
 
-    float numberOfItems = g_contact_count;
+    // Total items = contacts + rooms
+    float numberOfItems = g_contact_count + g_room_count;
     float itemHeight = 40;
     static float scrollY = 0.0f;
     static float scrollSpeed = 20.0f;
@@ -212,25 +306,61 @@ void drawChatListPanel()
     }
 
     BeginScissorMode((int)Position_GuiListView.x, (int)Position_GuiListView.y, (int)Position_GuiListView.width, (int)Position_GuiListView.height);
-    for (int i = 0; i < numberOfItems; i++)
+    
+    int itemIndex = 0;
+    
+    // Draw rooms first (with "Room -> " prefix)
+    for (int i = 0; i < g_room_count; i++)
     {
-        float itemY = Position_GuiListView.y + scrollY + (i * itemHeight);
-        if (itemY + itemHeight < Position_GuiListView.y || itemY > Position_GuiListView.y + Position_GuiListView.height) continue;
+        float itemY = Position_GuiListView.y + scrollY + (itemIndex * itemHeight);
+        if (itemY + itemHeight >= Position_GuiListView.y && itemY <= Position_GuiListView.y + Position_GuiListView.height) {
+            Rectangle Position_ChatListButton = { 0, itemY, Panel_ChatList.width, 40 };
 
-        Rectangle Position_ChatListButton = { 0, itemY, Panel_ChatList.width, 40 };
+            // Click handling for room
+            if (CheckCollisionPointRec(mousePos, Position_ChatListButton) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+                g_current_chat_contact_id = g_rooms[i].id;
+                snprintf(g_current_chat_contact_name, sizeof(g_current_chat_contact_name), "Room -> %s", g_rooms[i].name);
+                g_is_current_chat_room = true;
+                char* history_str = MessageService_get_group_history(g_current_chat_contact_id);
+                parse_and_load_messages(history_str);
+                if (history_str) free(history_str);
+                
+                // Fetch sender names for room messages
+                for (int j = 0; j < g_chat_message_count; j++) {
+                    get_username_by_id(g_chat_messages[j].sender_id, g_chat_messages[j].sender_name, sizeof(g_chat_messages[j].sender_name));
+                }
+            }
 
-        // Click handling
-        if (CheckCollisionPointRec(mousePos, Position_ChatListButton) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
-            g_current_chat_contact_id = g_contacts[i].id;
-            strncpy(g_current_chat_contact_name, g_contacts[i].username, sizeof(g_current_chat_contact_name) - 1);
-            g_current_chat_contact_name[sizeof(g_current_chat_contact_name) - 1] = '\0';
-            char* history_str = MessageService_get_history(g_current_chat_contact_id);
-            parse_and_load_messages(history_str);
-            if (history_str) free(history_str);
+            char room_display[300];
+            snprintf(room_display, sizeof(room_display), "Room -> %s", g_rooms[i].name);
+            ChatListButton(Position_ChatListButton, room_display, Font_Opensans_Bold_17, 15, (Color){60, 60, 80, 255}, COLOR_DARKTHEME_BLACK, COLOR_DARKTHEME_GRAY, (Color){150, 200, 255, 255}, 0);
         }
-
-        ChatListButton(Position_ChatListButton, g_contacts[i].username, Font_Opensans_Bold_17, 15, COLOR_DARKTHEME_GRAY, COLOR_DARKTHEME_BLACK, COLOR_DARKTHEME_GRAY, WHITE, 0);
+        itemIndex++;
     }
+    
+    // Draw contacts (DMs)
+    for (int i = 0; i < g_contact_count; i++)
+    {
+        float itemY = Position_GuiListView.y + scrollY + (itemIndex * itemHeight);
+        if (itemY + itemHeight >= Position_GuiListView.y && itemY <= Position_GuiListView.y + Position_GuiListView.height) {
+            Rectangle Position_ChatListButton = { 0, itemY, Panel_ChatList.width, 40 };
+
+            // Click handling for contact
+            if (CheckCollisionPointRec(mousePos, Position_ChatListButton) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+                g_current_chat_contact_id = g_contacts[i].id;
+                strncpy(g_current_chat_contact_name, g_contacts[i].username, sizeof(g_current_chat_contact_name) - 1);
+                g_current_chat_contact_name[sizeof(g_current_chat_contact_name) - 1] = '\0';
+                g_is_current_chat_room = false;
+                char* history_str = MessageService_get_history(g_current_chat_contact_id);
+                parse_and_load_messages(history_str);
+                if (history_str) free(history_str);
+            }
+
+            ChatListButton(Position_ChatListButton, g_contacts[i].username, Font_Opensans_Bold_17, 15, COLOR_DARKTHEME_GRAY, COLOR_DARKTHEME_BLACK, COLOR_DARKTHEME_GRAY, WHITE, 0);
+        }
+        itemIndex++;
+    }
+    
     EndScissorMode();
 }
 
@@ -287,7 +417,22 @@ void drawChatSection()
         float itemY = Position_ChatPage.y + scrollY + (i * itemHeight);
         if (itemY + itemHeight < Position_ChatPage.y || itemY > Position_ChatPage.y + Position_ChatPage.height) continue;
 
-        Rectangle Position_bubbleChat = { Position_ChatPage.x, itemY, Position_ChatPage.width, 40 };
+        Rectangle Position_bubbleChat = { Position_ChatPage.x, itemY + 20, Position_ChatPage.width, 40 };
+
+        // For room messages, show sender name above the bubble
+        if (g_is_current_chat_room && strlen(g_chat_messages[i].sender_name) > 0) {
+            Color nameColor = g_chat_messages[i].is_me ? (Color){150, 200, 255, 255} : (Color){255, 200, 150, 255};
+            Vector2 namePos;
+            if (g_chat_messages[i].is_me) {
+                // Align right for my messages
+                Vector2 nameSize = MeasureTextEx(Font_Opensans_Regular_20, g_chat_messages[i].sender_name, 14, 1);
+                namePos = (Vector2){ Position_ChatPage.x + Position_ChatPage.width - nameSize.x - 30, itemY + 2 };
+            } else {
+                // Align left for others
+                namePos = (Vector2){ Position_ChatPage.x + 30, itemY + 2 };
+            }
+            DrawTextEx(Font_Opensans_Regular_20, g_chat_messages[i].sender_name, namePos, 14, 1, nameColor);
+        }
 
         // Use is_me from message to determine bubble position (left/right)
         DrawBubbleChat(Position_bubbleChat, g_chat_messages[i].message, Font_Opensans_Regular_20, 20, BLACK, g_chat_messages[i].is_me);
@@ -322,8 +467,14 @@ void drawChatSection()
             strncpy(message_to_send, dynamic_chatsceen_input, sizeof(message_to_send) - 1);
             message_to_send[sizeof(message_to_send) - 1] = '\0';
             
-            // Send the message via MessageService
-            bool send_success = MessageService_send_dm(g_current_chat_contact_id, message_to_send);
+            bool send_success = false;
+            
+            // Send via appropriate service based on chat type
+            if (g_is_current_chat_room) {
+                send_success = MessageService_send_group_message(g_current_chat_contact_id, message_to_send);
+            } else {
+                send_success = MessageService_send_dm(g_current_chat_contact_id, message_to_send);
+            }
             
             if (send_success && g_chat_message_count < 2048) {
                 // Add the sent message to local chat display
@@ -333,6 +484,12 @@ void drawChatSection()
                 msg->message[sizeof(msg->message) - 1] = '\0';
                 strcpy(msg->time, "Just now");
                 msg->is_me = true;
+                // Set sender name for room messages
+                if (g_is_current_chat_room) {
+                    strcpy(msg->sender_name, "Me");
+                } else {
+                    msg->sender_name[0] = '\0';
+                }
                 g_chat_message_count++;
                 g_should_scroll_to_bottom = true; // Auto-scroll to show sent message
                 
@@ -461,9 +618,191 @@ static void drawNewChatDialog()
     }
 }
 
+static void addRoomToList(long roomId, const char* roomName) {
+    // Check if room already exists
+    for (int i = 0; i < g_room_count; i++) {
+        if (g_rooms[i].id == roomId) return;
+    }
+    if (g_room_count < 256) {
+        g_rooms[g_room_count].id = roomId;
+        strncpy(g_rooms[g_room_count].name, roomName, sizeof(g_rooms[g_room_count].name) - 1);
+        g_rooms[g_room_count].name[sizeof(g_rooms[g_room_count].name) - 1] = '\0';
+        g_room_count++;
+    }
+}
+
+static void drawRoomDialog()
+{
+    if (!g_show_room_dialog) return;
+    
+    // Draw semi-transparent overlay
+    DrawRectangle(0, 0, WINDOW_SCREEN_WIDTH, WINDOW_SCREEN_HEIGHT, ColorAlpha(BLACK, 0.7f));
+    
+    // Dialog box
+    float dialogWidth = 400;
+    float dialogHeight = 300;
+    Rectangle dialogRect = {
+        WINDOW_SCREEN_WIDTH / 2 - dialogWidth / 2,
+        WINDOW_SCREEN_HEIGHT / 2 - dialogHeight / 2,
+        dialogWidth,
+        dialogHeight
+    };
+    DrawRectangleRounded(dialogRect, 0.1f, 10, COLOR_DARKTHEME_GRAY);
+    
+    // Title
+    const char* title = "Rooms";
+    Vector2 titleSize = MeasureTextEx(Font_Opensans_Bold_20, title, 20, 1);
+    Vector2 titlePos = { dialogRect.x + dialogRect.width / 2 - titleSize.x / 2, dialogRect.y + 20 };
+    DrawTextEx(Font_Opensans_Bold_20, title, titlePos, 20, 1, WHITE);
+    
+    Vector2 mousePos = GetMousePosition();
+    
+    if (g_room_dialog_mode == 0) {
+        // Menu mode - show Create and Join buttons
+        Rectangle createBtn = { dialogRect.x + 50, dialogRect.y + 80, dialogRect.width - 100, 40 };
+        Rectangle joinBtn = { dialogRect.x + 50, dialogRect.y + 140, dialogRect.width - 100, 40 };
+        
+        bool createHover = CheckCollisionPointRec(mousePos, createBtn);
+        bool joinHover = CheckCollisionPointRec(mousePos, joinBtn);
+        
+        DrawRectangleRounded(createBtn, 0.3f, 10, createHover ? COLOR_DARKTHEME_BLACK : COLOR_DARKTHEME_PURPLE);
+        DrawRectangleRounded(joinBtn, 0.3f, 10, joinHover ? COLOR_DARKTHEME_BLACK : COLOR_DARKTHEME_PURPLE);
+        
+        Vector2 createTextSize = MeasureTextEx(Font_Opensans_Bold_17, "Create New Room", 17, 1);
+        Vector2 joinTextSize = MeasureTextEx(Font_Opensans_Bold_17, "Join Room by ID", 17, 1);
+        
+        DrawTextEx(Font_Opensans_Bold_17, "Create New Room", 
+            (Vector2){ createBtn.x + createBtn.width/2 - createTextSize.x/2, createBtn.y + createBtn.height/2 - createTextSize.y/2 }, 
+            17, 1, WHITE);
+        DrawTextEx(Font_Opensans_Bold_17, "Join Room by ID", 
+            (Vector2){ joinBtn.x + joinBtn.width/2 - joinTextSize.x/2, joinBtn.y + joinBtn.height/2 - joinTextSize.y/2 }, 
+            17, 1, WHITE);
+        
+        if (createHover && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+            g_room_dialog_mode = 1;
+            g_room_action_done = false;
+            memset(g_room_input, 0, sizeof(g_room_input));
+        }
+        if (joinHover && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+            g_room_dialog_mode = 2;
+            g_room_action_done = false;
+            memset(g_room_input, 0, sizeof(g_room_input));
+        }
+        
+    } else if (g_room_dialog_mode == 1) {
+        // Create room mode
+        DrawTextEx(Font_Opensans_Regular_20, "Enter room name:", (Vector2){ dialogRect.x + 30, dialogRect.y + 70 }, 18, 1, WHITE);
+        
+        Rectangle inputRect = { dialogRect.x + 30, dialogRect.y + 100, dialogRect.width - 60, 35 };
+        TextField inputField = createTextField("Room name...", g_room_input, &g_room_input_active, inputRect, 0.3f, 10.0f, &Font_Opensans_Regular_20);
+        drawTextField(&inputField);
+        
+        // Create button
+        Rectangle actionBtn = { dialogRect.x + dialogRect.width/2 - 80, dialogRect.y + 150, 160, 35 };
+        bool actionHover = CheckCollisionPointRec(mousePos, actionBtn);
+        DrawRectangleRounded(actionBtn, 0.3f, 10, actionHover ? COLOR_DARKTHEME_BLACK : COLOR_DARKTHEME_PURPLE);
+        Vector2 actionTextSize = MeasureTextEx(Font_Opensans_Bold_17, "Create", 17, 1);
+        DrawTextEx(Font_Opensans_Bold_17, "Create", 
+            (Vector2){ actionBtn.x + actionBtn.width/2 - actionTextSize.x/2, actionBtn.y + actionBtn.height/2 - actionTextSize.y/2 }, 
+            17, 1, WHITE);
+        
+        if ((actionHover && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) || (g_room_input_active && IsKeyPressed(KEY_ENTER))) {
+            if (strlen(g_room_input) > 0) {
+                long newRoomId = -1;
+                g_room_action_success = MessageService_create_group(g_room_input, &newRoomId);
+                if (g_room_action_success && newRoomId > 0) {
+                    snprintf(g_room_action_message, sizeof(g_room_action_message), "Room created! ID: %ld", newRoomId);
+                    addRoomToList(newRoomId, g_room_input);
+                } else {
+                    snprintf(g_room_action_message, sizeof(g_room_action_message), "Failed to create room");
+                }
+                g_room_action_done = true;
+            }
+        }
+        
+        // Back button
+        Rectangle backBtn = { dialogRect.x + 30, dialogRect.y + dialogRect.height - 50, 80, 30 };
+        bool backHover = CheckCollisionPointRec(mousePos, backBtn);
+        DrawTextEx(Font_Opensans_Regular_20, "< Back", (Vector2){ backBtn.x, backBtn.y + 5 }, 16, 1, backHover ? (Color){255, 200, 200, 255} : WHITE);
+        if (backHover && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+            g_room_dialog_mode = 0;
+            g_room_action_done = false;
+        }
+        
+        // Show result
+        if (g_room_action_done) {
+            Color resultColor = g_room_action_success ? (Color){100, 255, 100, 255} : (Color){255, 100, 100, 255};
+            DrawTextEx(Font_Opensans_Regular_20, g_room_action_message, (Vector2){ dialogRect.x + 30, dialogRect.y + 200 }, 16, 1, resultColor);
+        }
+        
+    } else if (g_room_dialog_mode == 2) {
+        // Join room mode
+        DrawTextEx(Font_Opensans_Regular_20, "Enter room ID:", (Vector2){ dialogRect.x + 30, dialogRect.y + 70 }, 18, 1, WHITE);
+        
+        Rectangle inputRect = { dialogRect.x + 30, dialogRect.y + 100, dialogRect.width - 60, 35 };
+        TextField inputField = createTextField("Room ID (number)...", g_room_input, &g_room_input_active, inputRect, 0.3f, 10.0f, &Font_Opensans_Regular_20);
+        drawTextField(&inputField);
+        
+        // Join button
+        Rectangle actionBtn = { dialogRect.x + dialogRect.width/2 - 80, dialogRect.y + 150, 160, 35 };
+        bool actionHover = CheckCollisionPointRec(mousePos, actionBtn);
+        DrawRectangleRounded(actionBtn, 0.3f, 10, actionHover ? COLOR_DARKTHEME_BLACK : COLOR_DARKTHEME_PURPLE);
+        Vector2 actionTextSize = MeasureTextEx(Font_Opensans_Bold_17, "Join", 17, 1);
+        DrawTextEx(Font_Opensans_Bold_17, "Join", 
+            (Vector2){ actionBtn.x + actionBtn.width/2 - actionTextSize.x/2, actionBtn.y + actionBtn.height/2 - actionTextSize.y/2 }, 
+            17, 1, WHITE);
+        
+        if ((actionHover && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) || (g_room_input_active && IsKeyPressed(KEY_ENTER))) {
+            if (strlen(g_room_input) > 0) {
+                long roomId = atol(g_room_input);
+                char roomName[256] = "";
+                g_room_action_success = MessageService_join_group(roomId, roomName, sizeof(roomName));
+                if (g_room_action_success) {
+                    snprintf(g_room_action_message, sizeof(g_room_action_message), "Joined room: %s", roomName);
+                    addRoomToList(roomId, roomName);
+                } else {
+                    snprintf(g_room_action_message, sizeof(g_room_action_message), "Failed to join (not found or already member)");
+                }
+                g_room_action_done = true;
+            }
+        }
+        
+        // Back button
+        Rectangle backBtn = { dialogRect.x + 30, dialogRect.y + dialogRect.height - 50, 80, 30 };
+        bool backHover = CheckCollisionPointRec(mousePos, backBtn);
+        DrawTextEx(Font_Opensans_Regular_20, "< Back", (Vector2){ backBtn.x, backBtn.y + 5 }, 16, 1, backHover ? (Color){255, 200, 200, 255} : WHITE);
+        if (backHover && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+            g_room_dialog_mode = 0;
+            g_room_action_done = false;
+        }
+        
+        // Show result
+        if (g_room_action_done) {
+            Color resultColor = g_room_action_success ? (Color){100, 255, 100, 255} : (Color){255, 100, 100, 255};
+            DrawTextEx(Font_Opensans_Regular_20, g_room_action_message, (Vector2){ dialogRect.x + 30, dialogRect.y + 200 }, 16, 1, resultColor);
+        }
+    }
+    
+    // Close button (X)
+    Rectangle closeBtn = { dialogRect.x + dialogRect.width - 35, dialogRect.y + 10, 25, 25 };
+    bool closeHover = CheckCollisionPointRec(mousePos, closeBtn);
+    DrawTextEx(Font_Opensans_Bold_20, "X", (Vector2){ closeBtn.x + 5, closeBtn.y + 2 }, 20, 1, closeHover ? RED : WHITE);
+    
+    if (closeHover && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+        g_show_room_dialog = false;
+        g_room_dialog_mode = 0;
+    }
+    
+    if (IsKeyPressed(KEY_ESCAPE)) {
+        g_show_room_dialog = false;
+        g_room_dialog_mode = 0;
+    }
+}
+
 void drawChatScreen()
 {
     drawChatListPanel();
     drawChatSection();
-    drawNewChatDialog(); // Draw dialog on top
+    drawNewChatDialog();
+    drawRoomDialog(); // Draw room dialog on top
 }

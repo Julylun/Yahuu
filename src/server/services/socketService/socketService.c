@@ -100,12 +100,111 @@ static void* client_handler(void* socket_desc) {
                 if (groupName) {
                     long new_groupId = GroupService_create_group(groupName, sender_session->userId);
                     if (new_groupId > 0) {
-                        snprintf(response, sizeof(response), "CREATE_GROUP_SUCCESS^%ld", new_groupId);
+                        snprintf(response, sizeof(response), "CREATE_GROUP_SUCCESS^%ld^%s", new_groupId, groupName);
                     } else {
                         snprintf(response, sizeof(response), "CREATE_GROUP_FAIL");
                     }
                 } else {
                     snprintf(response, sizeof(response), "CREATE_GROUP_FAIL^INSUFFICIENT_ARGS");
+                }
+            }
+        } else if (strcmp(command, "JOIN_GROUP") == 0) {
+            const UserSession* sender_session = SessionManager_get_session_by_socket(sock);
+            if (sender_session == NULL) {
+                snprintf(response, sizeof(response), "ERROR^NOT_LOGGED_IN");
+            } else {
+                char* groupId_str = strtok(NULL, separator);
+                if (groupId_str) {
+                    long groupId = atol(groupId_str);
+                    char group_name[256];
+                    if (GroupService_get_group_name(groupId, group_name, sizeof(group_name)) == 0) {
+                        if (GroupService_join_group(groupId, sender_session->userId) == 0) {
+                            snprintf(response, sizeof(response), "JOIN_GROUP_SUCCESS^%ld^%s", groupId, group_name);
+                        } else {
+                            snprintf(response, sizeof(response), "JOIN_GROUP_FAIL^ALREADY_MEMBER_OR_ERROR");
+                        }
+                    } else {
+                        snprintf(response, sizeof(response), "JOIN_GROUP_FAIL^GROUP_NOT_FOUND");
+                    }
+                } else {
+                    snprintf(response, sizeof(response), "JOIN_GROUP_FAIL^INSUFFICIENT_ARGS");
+                }
+            }
+        } else if (strcmp(command, "GET_MY_GROUPS") == 0) {
+            const UserSession* sender_session = SessionManager_get_session_by_socket(sock);
+            if (sender_session == NULL) {
+                snprintf(response, sizeof(response), "ERROR^NOT_LOGGED_IN");
+            } else {
+                int count = 0;
+                long* groups = GroupService_get_user_groups(sender_session->userId, &count);
+                
+                if (groups != NULL && count > 0) {
+                    size_t buffer_size = 8192;
+                    char* groups_response = malloc(buffer_size);
+                    if (groups_response) {
+                        strcpy(groups_response, "MY_GROUPS_DATA^");
+                        size_t current_len = strlen(groups_response);
+                        
+                        for (int i = 0; i < count; i++) {
+                            char group_name[256];
+                            if (GroupService_get_group_name(groups[i], group_name, sizeof(group_name)) == 0) {
+                                int written = snprintf(groups_response + current_len, buffer_size - current_len,
+                                                       "%ld,%s;", groups[i], group_name);
+                                if (written > 0 && current_len + written < buffer_size) {
+                                    current_len += written;
+                                }
+                            }
+                        }
+                        write(sock, groups_response, current_len);
+                        free(groups_response);
+                    }
+                    free(groups);
+                } else {
+                    write(sock, "MY_GROUPS_DATA^", strlen("MY_GROUPS_DATA^"));
+                }
+                snprintf(response, sizeof(response), "");
+            }
+        } else if (strcmp(command, "GET_GROUP_HISTORY") == 0) {
+            const UserSession* sender_session = SessionManager_get_session_by_socket(sock);
+            if (sender_session == NULL) {
+                snprintf(response, sizeof(response), "ERROR^NOT_LOGGED_IN");
+            } else {
+                char* groupId_str = strtok(NULL, separator);
+                if (groupId_str) {
+                    long groupId = atol(groupId_str);
+                    PeachRecordSet* history = GroupService_get_group_history(groupId);
+                    
+                    if (history != NULL && history->record_count > 0) {
+                        size_t buffer_size = 16384;
+                        char* history_response = malloc(buffer_size);
+                        if (history_response) {
+                            strcpy(history_response, "GROUP_HISTORY_DATA^");
+                            size_t current_len = strlen(history_response);
+                            
+                            for (PeachRecord* rec = history->head; rec != NULL; rec = rec->next) {
+                                // fields: id^groupId^senderId^message^time
+                                char* msg_senderId = rec->fields[2];
+                                char* msg_content = rec->fields[3];
+                                char* msg_time = rec->fields[4];
+                                
+                                int written = snprintf(history_response + current_len, buffer_size - current_len,
+                                                       "%s,%s,%s;", msg_senderId, msg_content, msg_time);
+                                if (written > 0 && current_len + written < buffer_size) {
+                                    current_len += written;
+                                } else {
+                                    break;
+                                }
+                            }
+                            write(sock, history_response, current_len);
+                            free(history_response);
+                        }
+                        Peach_free_record_set(history);
+                    } else {
+                        write(sock, "GROUP_HISTORY_DATA^", strlen("GROUP_HISTORY_DATA^"));
+                    }
+                    snprintf(response, sizeof(response), "");
+                } else {
+                    snprintf(response, sizeof(response), "ERROR^GET_GROUP_HISTORY_FAIL^INSUFFICIENT_ARGS");
                 }
             }
         } else if (strcmp(command, "SEND_GROUP_MSG") == 0) {
