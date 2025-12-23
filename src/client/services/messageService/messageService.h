@@ -32,4 +32,14 @@ char* MessageService_get_history(long contactId);
  */
 long* MessageService_get_contacts(int* count);
 
+/**
+ * @brief Gets the username for a given user ID.
+ * This is a blocking call that sends the request and waits for the response.
+ * @param userId The ID of the user to get info for.
+ * @param out_username Buffer to store the username (should be at least 256 bytes).
+ * @param buffer_size Size of the out_username buffer.
+ * @return true on success, false on failure.
+ */
+bool MessageService_get_user_info(long userId, char* out_username, int buffer_size);
+
 #endif // MESSAGE_SERVICE_H

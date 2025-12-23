@@ -234,6 +234,20 @@ static void* client_handler(void* socket_desc) {
                     write(sock, "CONTACTS_DATA^", strlen("CONTACTS_DATA^"));
                 }
             }
+        } else if (strcmp(command, "GET_USER_INFO") == 0) {
+            char* userId_str = strtok(NULL, separator);
+            if (userId_str) {
+                long userId = atol(userId_str);
+                User* user = User_read(userId);
+                if (user != NULL) {
+                    snprintf(response, sizeof(response), "USER_INFO^%ld^%s", user->id, user->username);
+                    User_free(user);
+                } else {
+                    snprintf(response, sizeof(response), "USER_INFO_FAIL^USER_NOT_FOUND");
+                }
+            } else {
+                snprintf(response, sizeof(response), "USER_INFO_FAIL^INSUFFICIENT_ARGS");
+            }
         } else {
             snprintf(response, sizeof(response), "ERROR^UNKNOWN_COMMAND");
         }

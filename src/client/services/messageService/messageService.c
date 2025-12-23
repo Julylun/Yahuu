@@ -156,3 +156,47 @@ long* MessageService_get_contacts(int* count) {
     fprintf(stderr, "MessageService: Timed out waiting for contacts response.\n");
     return NULL;
 }
+
+bool MessageService_get_user_info(long userId, char* out_username, int buffer_size) {
+    if (out_username == NULL || buffer_size <= 0) return false;
+    out_username[0] = '\0';
+
+    char command[256];
+    snprintf(command, sizeof(command), "GET_USER_INFO^%ld", userId);
+
+    Network_clear_response();
+    if (Network_send(command) != 0) {
+        fprintf(stderr, "MessageService: Failed to send GET_USER_INFO command.\n");
+        return false;
+    }
+
+    char response[1024];
+    const char* success_prefix = "USER_INFO^";
+
+    for (int i = 0; i < 20; i++) { // 2 second timeout
+        usleep(100000);
+        memset(response, 0, sizeof(response));
+        Network_get_response(response, sizeof(response));
+
+        if (strlen(response) > 0) {
+            if (strncmp(response, success_prefix, strlen(success_prefix)) == 0) {
+                // Parse: USER_INFO^userId^username
+                char* data_str = response + strlen(success_prefix);
+                char* saveptr = NULL;
+                char* userId_str = strtok_r(data_str, "^", &saveptr);
+                char* username_str = strtok_r(NULL, "^", &saveptr);
+
+                if (username_str != NULL) {
+                    strncpy(out_username, username_str, buffer_size - 1);
+                    out_username[buffer_size - 1] = '\0';
+                    return true;
+                }
+            }
+            fprintf(stderr, "MessageService: Failed to get user info: %s\n", response);
+            return false;
+        }
+    }
+
+    fprintf(stderr, "MessageService: Timed out waiting for user info response.\n");
+    return false;
+}

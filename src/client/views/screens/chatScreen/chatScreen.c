@@ -18,10 +18,18 @@ typedef struct {
 } ChatMessage;
 
 static long g_my_user_id = -1; // Placeholder for the current user's ID
-static long g_contact_ids[1024];
+
+// Contact info with username
+typedef struct {
+    long id;
+    char username[256];
+} ContactInfo;
+
+static ContactInfo g_contacts[1024];
 static int g_contact_count = 0;
 
 static long g_current_chat_contact_id = -1;
+static char g_current_chat_contact_name[256] = "";
 static ChatMessage g_chat_messages[2048];
 static int g_chat_message_count = 0;
 static bool g_should_scroll_to_bottom = false; // Flag to auto-scroll when new messages arrive
@@ -70,13 +78,18 @@ static void parse_and_load_messages(const char* history_data) {
 static void add_contact_if_not_exists(long contactId) {
     bool found = false;
     for (int i = 0; i < g_contact_count; i++) {
-        if (g_contact_ids[i] == contactId) {
+        if (g_contacts[i].id == contactId) {
             found = true;
             break;
         }
     }
     if (!found && g_contact_count < 1024) {
-        g_contact_ids[g_contact_count++] = contactId;
+        g_contacts[g_contact_count].id = contactId;
+        // Try to fetch username
+        if (!MessageService_get_user_info(contactId, g_contacts[g_contact_count].username, sizeof(g_contacts[g_contact_count].username))) {
+            snprintf(g_contacts[g_contact_count].username, sizeof(g_contacts[g_contact_count].username), "User %ld", contactId);
+        }
+        g_contact_count++;
     }
 }
 
@@ -125,11 +138,18 @@ void drawChatListPanel()
         printf("ChatScreen: Initialized with user ID: %ld\n", g_my_user_id);
 
         int count = 0;
-        long* contacts = MessageService_get_contacts(&count);
-        if (contacts != NULL) {
-            g_contact_count = count < 1024 ? count : 1024;
-            memcpy(g_contact_ids, contacts, g_contact_count * sizeof(long));
-            free(contacts);
+        long* contact_ids = MessageService_get_contacts(&count);
+        if (contact_ids != NULL) {
+            int num_contacts = count < 1024 ? count : 1024;
+            for (int i = 0; i < num_contacts; i++) {
+                g_contacts[i].id = contact_ids[i];
+                // Fetch username for each contact
+                if (!MessageService_get_user_info(contact_ids[i], g_contacts[i].username, sizeof(g_contacts[i].username))) {
+                    snprintf(g_contacts[i].username, sizeof(g_contacts[i].username), "User %ld", contact_ids[i]);
+                }
+            }
+            g_contact_count = num_contacts;
+            free(contact_ids);
         }
         isInitialized = true;
     }
@@ -182,15 +202,15 @@ void drawChatListPanel()
 
         // Click handling
         if (CheckCollisionPointRec(mousePos, Position_ChatListButton) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
-            g_current_chat_contact_id = g_contact_ids[i];
+            g_current_chat_contact_id = g_contacts[i].id;
+            strncpy(g_current_chat_contact_name, g_contacts[i].username, sizeof(g_current_chat_contact_name) - 1);
+            g_current_chat_contact_name[sizeof(g_current_chat_contact_name) - 1] = '\0';
             char* history_str = MessageService_get_history(g_current_chat_contact_id);
             parse_and_load_messages(history_str);
             if (history_str) free(history_str);
         }
 
-        char user_text[64];
-        snprintf(user_text, sizeof(user_text), "User ID: %ld", g_contact_ids[i]);
-        ChatListButton(Position_ChatListButton, user_text, Font_Opensans_Bold_17, 15, COLOR_DARKTHEME_GRAY, COLOR_DARKTHEME_BLACK, COLOR_DARKTHEME_GRAY, WHITE, 0);
+        ChatListButton(Position_ChatListButton, g_contacts[i].username, Font_Opensans_Bold_17, 15, COLOR_DARKTHEME_GRAY, COLOR_DARKTHEME_BLACK, COLOR_DARKTHEME_GRAY, WHITE, 0);
     }
     EndScissorMode();
 }
@@ -205,7 +225,7 @@ void drawChatSection()
     Vector2 Position_ChatNameText = { Position_ChatName.x + 20, Position_ChatName.y + 15 };
 
     if (g_current_chat_contact_id != -1) {
-        DrawTextEx(Font_Opensans_Bold_20, TextFormat("Chat with User %ld", g_current_chat_contact_id), Position_ChatNameText, 20, 0, WHITE);
+        DrawTextEx(Font_Opensans_Bold_20, TextFormat("Chat with %s", g_current_chat_contact_name), Position_ChatNameText, 20, 0, WHITE);
     } else {
         DrawTextEx(Font_Opensans_Bold_20, "Select a chat", Position_ChatNameText, 20, 0, WHITE);
     }
