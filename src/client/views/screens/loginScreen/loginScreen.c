@@ -1,5 +1,6 @@
 #include "loginScreen.h"
 #include <raylib.h>
+#include <stdio.h>
 
 
 static char dynamic_login_usernameValue[100] = "";
@@ -8,8 +9,10 @@ static char dynamic_login_passwordValue[100] = "";
 static bool dynamic_login_passwordIsActive = false;
 void login()
 {
-    bool status = AuthService_login(dynamic_login_usernameValue, dynamic_login_passwordValue);
+    long userId = -1;
+    bool status = AuthService_login(dynamic_login_usernameValue, dynamic_login_passwordValue, &userId);
     if (status) {
+        printf("Login successful! User ID: %ld\n", userId);
         changeScreenState(CHAT);
     } else {
         setDebugMessage("Login failed!!!");

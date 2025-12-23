@@ -6,6 +6,7 @@
 #include <stdbool.h>
 #include "../../../services/networkService/networkService.h"
 #include "../../../services/messageService/messageService.h"
+#include "../../../services/authService/authService.h"
 #include "../../components/components.h"
 
 // --- Module State ---
@@ -23,6 +24,7 @@ static int g_contact_count = 0;
 static long g_current_chat_contact_id = -1;
 static ChatMessage g_chat_messages[2048];
 static int g_chat_message_count = 0;
+static bool g_should_scroll_to_bottom = false; // Flag to auto-scroll when new messages arrive
 
 // --- Helper Functions ---
 static void parse_and_load_messages(const char* history_data) {
@@ -32,24 +34,35 @@ static void parse_and_load_messages(const char* history_data) {
     }
 
     char* history_copy = strdup(history_data);
-    char* msg_token = strtok(history_copy, ";");
+    char* outer_saveptr = NULL;
+    char* inner_saveptr = NULL;
+    
+    char* msg_token = strtok_r(history_copy, ";", &outer_saveptr);
 
     while (msg_token != NULL && g_chat_message_count < 2048) {
-        char* sender_str = strtok(msg_token, ",");
-        char* message_str = strtok(NULL, ",");
-        char* time_str = strtok(NULL, ",");
+        // Make a copy of msg_token for inner parsing
+        char* msg_copy = strdup(msg_token);
+        
+        char* sender_str = strtok_r(msg_copy, ",", &inner_saveptr);
+        char* message_str = strtok_r(NULL, ",", &inner_saveptr);
+        char* time_str = strtok_r(NULL, ",", &inner_saveptr);
 
         if (sender_str && message_str && time_str) {
             ChatMessage* msg = &g_chat_messages[g_chat_message_count];
             msg->sender_id = atol(sender_str);
             strncpy(msg->message, message_str, sizeof(msg->message) - 1);
+            msg->message[sizeof(msg->message) - 1] = '\0';
             strncpy(msg->time, time_str, sizeof(msg->time) - 1);
+            msg->time[sizeof(msg->time) - 1] = '\0';
             msg->is_me = (msg->sender_id == g_my_user_id);
             g_chat_message_count++;
         }
-        msg_token = strtok(NULL, ";");
+        
+        free(msg_copy);
+        msg_token = strtok_r(NULL, ";", &outer_saveptr);
     }
     free(history_copy);
+    g_should_scroll_to_bottom = true; // Auto-scroll when loading chat history
     printf("ChatScreen: Parsed and loaded %d messages.\n", g_chat_message_count);
 }
 
@@ -87,9 +100,12 @@ static void handle_async_messages(const char* message) {
                     ChatMessage* msg = &g_chat_messages[g_chat_message_count];
                     msg->sender_id = senderId;
                     strncpy(msg->message, msg_content, sizeof(msg->message) - 1);
+                    msg->message[sizeof(msg->message) - 1] = '\0';
                     strcpy(msg->time, "Just now");
-                    msg->is_me = (msg->sender_id == g_my_user_id);
+                    msg->is_me = false; // Message from others
                     g_chat_message_count++;
+                    g_should_scroll_to_bottom = true; // Auto-scroll when receiving new message
+                    printf("ChatScreen: Received message from %ld\n", senderId);
                 }
             }
         }
@@ -103,6 +119,10 @@ void drawChatListPanel()
     if (!isInitialized) {
         // One-time initialization for this screen
         Network_set_async_message_handler(handle_async_messages);
+        
+        // Get the current user ID from auth service
+        g_my_user_id = AuthService_get_current_user_id();
+        printf("ChatScreen: Initialized with user ID: %ld\n", g_my_user_id);
 
         int count = 0;
         long* contacts = MessageService_get_contacts(&count);
@@ -198,6 +218,19 @@ void drawChatSection()
     static float scrollY = 0.0f;
     static float scrollSpeed = 20.0f;
     float contentHeight = numberOfItems * itemHeight;
+    float maxScroll = contentHeight - Position_ChatPage.height;
+    if (maxScroll < 0) maxScroll = 0;
+    
+    // Auto-scroll to bottom when new messages arrive
+    if (g_should_scroll_to_bottom) {
+        if (contentHeight > Position_ChatPage.height) {
+            scrollY = -maxScroll;
+        } else {
+            scrollY = 0;
+        }
+        g_should_scroll_to_bottom = false;
+    }
+    
     Vector2 mousePos = GetMousePosition();
     if (CheckCollisionPointRec(mousePos, Position_ChatPage))
     {
@@ -205,7 +238,6 @@ void drawChatSection()
         if (wheel != 0) {
             scrollY += wheel * scrollSpeed;
             if (scrollY > 0) scrollY = 0;
-            float maxScroll = contentHeight - Position_ChatPage.height;
             if (contentHeight > Position_ChatPage.height && scrollY < -maxScroll) scrollY = -maxScroll;
         }
     }
@@ -218,8 +250,8 @@ void drawChatSection()
 
         Rectangle Position_bubbleChat = { Position_ChatPage.x, itemY, Position_ChatPage.width, 40 };
 
-        // NOTE: 'is_me' logic depends on knowing our own user ID, which we don't have yet. Hardcoding to false.
-        DrawBubbleChat(Position_bubbleChat, g_chat_messages[i].message, Font_Opensans_Regular_20, 20, BLACK, false);
+        // Use is_me from message to determine bubble position (left/right)
+        DrawBubbleChat(Position_bubbleChat, g_chat_messages[i].message, Font_Opensans_Regular_20, 20, BLACK, g_chat_messages[i].is_me);
     }
     EndScissorMode();
 
@@ -242,6 +274,38 @@ void drawChatSection()
         &Font_Opensans_Regular_20
     );
     drawTextField(&inputBox);
+
+    // Handle sending message when Enter is pressed
+    if (dynamic_chatscreen_isActive && IsKeyPressed(KEY_ENTER)) {
+        if (g_current_chat_contact_id != -1 && strlen(dynamic_chatsceen_input) > 0) {
+            // Save message content before sending (in case input gets modified)
+            char message_to_send[100];
+            strncpy(message_to_send, dynamic_chatsceen_input, sizeof(message_to_send) - 1);
+            message_to_send[sizeof(message_to_send) - 1] = '\0';
+            
+            // Send the message via MessageService
+            bool send_success = MessageService_send_dm(g_current_chat_contact_id, message_to_send);
+            
+            if (send_success && g_chat_message_count < 2048) {
+                // Add the sent message to local chat display
+                ChatMessage* msg = &g_chat_messages[g_chat_message_count];
+                msg->sender_id = g_my_user_id;
+                strncpy(msg->message, message_to_send, sizeof(msg->message) - 1);
+                msg->message[sizeof(msg->message) - 1] = '\0';
+                strcpy(msg->time, "Just now");
+                msg->is_me = true;
+                g_chat_message_count++;
+                g_should_scroll_to_bottom = true; // Auto-scroll to show sent message
+                
+                printf("ChatScreen: Message sent successfully.\n");
+            } else if (!send_success) {
+                printf("ChatScreen: Failed to send message.\n");
+            }
+            
+            // Clear input field after sending
+            memset(dynamic_chatsceen_input, 0, sizeof(dynamic_chatsceen_input));
+        }
+    }
 }
 
 void drawChatScreen()

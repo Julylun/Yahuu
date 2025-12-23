@@ -54,7 +54,7 @@ static void* client_handler(void* socket_desc) {
                 User* user = UserService_login(username, password);
                 if (user != NULL) {
                     SessionManager_add(user->id, user->username, sock);
-                    snprintf(response, sizeof(response), "LOGIN_SUCCESS");
+                    snprintf(response, sizeof(response), "LOGIN_SUCCESS^%ld", user->id);
                     User_free(user); // Free the user struct after use
                 } else {
                     snprintf(response, sizeof(response), "LOGIN_FAIL^INVALID_CREDENTIALS");

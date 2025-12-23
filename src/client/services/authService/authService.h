@@ -19,8 +19,15 @@ bool AuthService_register(const char* username, const char* password);
  * confirmation from the server.
  * @param username The user's username.
  * @param password The user's password.
+ * @param out_userId Pointer to store the logged-in user's ID on success.
  * @return true on successful login, false otherwise (e.g., wrong credentials).
  */
-bool AuthService_login(const char* username, const char* password);
+bool AuthService_login(const char* username, const char* password, long* out_userId);
+
+/**
+ * @brief Gets the currently logged-in user's ID.
+ * @return The user ID if logged in, -1 otherwise.
+ */
+long AuthService_get_current_user_id(void);
 
 #endif // AUTH_SERVICE_H
